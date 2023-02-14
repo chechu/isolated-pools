@@ -43,15 +43,6 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
         mapping(VToken => uint256) marketDebt;
     }
 
-    /// @notice Pool registry address
-    address public poolRegistry;
-
-    /// @notice Risk fund address
-    IRiskFund private riskFund;
-
-    /// @notice Minimum USD debt in pool for shortfall to trigger
-    uint256 public minimumPoolBadDebt;
-
     /// @notice Incentive to auction participants.
     uint256 private constant incentiveBps = 1000; /// @notice 10%
 
@@ -63,6 +54,15 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
 
     /// @notice Time to wait for first bidder. wait for 100 blocks
     uint256 public constant waitForFirstBidder = 100;
+
+    /// @notice Pool registry address
+    address public poolRegistry;
+
+    /// @notice Risk fund address
+    IRiskFund private riskFund;
+
+    /// @notice Minimum USD debt in pool for shortfall to trigger
+    uint256 public minimumPoolBadDebt;
 
     /// @notice base asset contract address
     address public convertibleBaseAsset;
