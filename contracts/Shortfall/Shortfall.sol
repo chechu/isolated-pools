@@ -282,7 +282,7 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
      * @custom:event Emits MinimumPoolBadDebtUpdated on success
      * @custom:access Restricted to owner
      */
-    function updateMinimumPoolBadDebt(uint256 _minimumPoolBadDebt) public onlyOwner {
+    function updateMinimumPoolBadDebt(uint256 _minimumPoolBadDebt) external onlyOwner {
         uint256 oldMinimumPoolBadDebt = minimumPoolBadDebt;
         minimumPoolBadDebt = _minimumPoolBadDebt;
         emit MinimumPoolBadDebtUpdated(oldMinimumPoolBadDebt, _minimumPoolBadDebt);
@@ -295,7 +295,7 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
      * @custom:event Emits PoolRegistryUpdated on success
      * @custom:access Restricted to owner
      */
-    function setPoolRegistry(address _poolRegistry) public onlyOwner {
+    function setPoolRegistry(address _poolRegistry) external onlyOwner {
         require(_poolRegistry != address(0), "invalid address");
         address oldPoolRegistry = poolRegistry;
         poolRegistry = _poolRegistry;
