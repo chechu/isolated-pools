@@ -70,6 +70,9 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
     /// @notice Auctions for each pool
     mapping(address => Auction) public auctions;
 
+    /// @notice AccessControlManager contract
+    address public accessControl;
+
     /// @notice Emitted when a auction starts
     event AuctionStarted(
         address indexed comptroller,
@@ -102,6 +105,9 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
 
     /// @notice Emitted when minimum pool bad debt is updated
     event MinimumPoolBadDebtUpdated(uint256 oldMinimumPoolBadDebt, uint256 newMinimumPoolBadDebt);
+
+    /// @notice Thrown when the action is prohibited by AccessControlManager
+    error Unauthorized(address sender, address calledContract, string methodSignature);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -238,11 +244,24 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
     }
 
     /**
+     * @notice Start an auction when there is not currently one active
+     * @param comptroller Comptroller address of the pool
+     * @custom:event Emits AuctionStarted event on success
+     * @custom:access Controlled by AccessControlManager
+     */
+    function startAuction(address comptroller) external {
+        _checkAccessAllowed("startAuction(address)");
+        _startAuction(comptroller);
+    }
+
+    /**
      * @notice Restart an auction
      * @param comptroller Address of the pool
      * @custom:event Emits AuctionRestarted event on successful restart
+     * @custom:access Controlled by AccessControlManager
      */
     function restartAuction(address comptroller) external {
+        _checkAccessAllowed("restartAuction(address)");
         Auction storage auction = auctions[comptroller];
 
         require(auction.startBlock != 0 && auction.status == AuctionStatus.STARTED, "no on-going auction");
@@ -254,7 +273,7 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
         auction.status = AuctionStatus.ENDED;
 
         emit AuctionRestarted(comptroller);
-        startAuction(comptroller);
+        _startAuction(comptroller);
     }
 
     /**
@@ -284,12 +303,10 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
     }
 
     /**
-     * @notice Start a auction when there is not currently one active
+     * @dev Start an auction when there is not currently one active
      * @param comptroller Comptroller address of the pool
-     * @custom:event Emits AuctionStarted event on success
-     * @custom:access Restricted to owner
      */
-    function startAuction(address comptroller) public onlyOwner {
+    function _startAuction(address comptroller) internal {
         PoolRegistryInterface.VenusPool memory pool = PoolRegistry(poolRegistry).getPoolByComptroller(comptroller);
         require(pool.comptroller == comptroller, "comptroller doesn't exist pool registry");
 
@@ -382,5 +399,15 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShor
      */
     function _getAllMarkets(address comptroller) internal view returns (VToken[] memory) {
         return ComptrollerInterface(comptroller).getAllMarkets();
+    }
+
+    /// @notice Reverts if the call is not allowed by AccessControlManager
+    /// @param signature Method signature
+    function _checkAccessAllowed(string memory signature) internal view {
+        bool isAllowedToCall = AccessControlManager(accessControl).isAllowedToCall(msg.sender, signature);
+
+        if (!isAllowedToCall) {
+            revert Unauthorized(msg.sender, address(this), signature);
+        }
     }
 }
