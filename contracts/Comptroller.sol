@@ -9,52 +9,18 @@ import "./ComptrollerInterface.sol";
 import "./ComptrollerStorage.sol";
 import "./Rewards/RewardsDistributor.sol";
 import "./Governance/AccessControlManager.sol";
+import "./MaxLoopsLimitHelper.sol";
 
 /**
- * @title Compound's Comptroller Contract
- * @author Compound
+ * @title Comptroller Contract
  */
-contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, ComptrollerInterface, ExponentialNoError {
-    struct LiquidationOrder {
-        VToken vTokenCollateral;
-        VToken vTokenBorrowed;
-        uint256 repayAmount;
-    }
-
-    struct AccountLiquiditySnapshot {
-        uint256 totalCollateral;
-        uint256 weightedCollateral;
-        uint256 borrows;
-        uint256 effects;
-        uint256 liquidity;
-        uint256 shortfall;
-    }
-
-    struct RewardSpeeds {
-        address rewardToken;
-        uint256 supplySpeed;
-        uint256 borrowSpeed;
-    }
-
-    uint256 internal constant NO_ERROR = 0;
-
-    // closeFactorMantissa must be strictly greater than this value
-    uint256 internal constant closeFactorMinMantissa = 0.05e18; // 0.05
-
-    // closeFactorMantissa must not exceed this value
-    uint256 internal constant closeFactorMaxMantissa = 0.9e18; // 0.9
-
-    // No collateralFactorMantissa may exceed this value
-    uint256 internal constant collateralFactorMaxMantissa = 0.9e18; // 0.9
-
-    // PoolRegistry, immutable to save on gas
-    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
-    address public immutable poolRegistry;
-
-    // AccessControlManager, immutable to save on gas
-    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
-    address public immutable accessControl;
-
+contract Comptroller is
+    Ownable2StepUpgradeable,
+    ComptrollerStorage,
+    ComptrollerInterface,
+    ExponentialNoError,
+    MaxLoopsLimitHelper
+{
     // List of Reward Distributors added
     RewardsDistributor[] private rewardsDistributors;
 
@@ -92,14 +58,17 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
     /// @notice Emitted when borrow cap for a vToken is changed
     event NewBorrowCap(VToken indexed vToken, uint256 newBorrowCap);
 
-    /// @notice Emitted when borrow cap guardian is changed
-    event NewBorrowCapGuardian(address oldBorrowCapGuardian, address newBorrowCapGuardian);
-
     /// @notice Emitted when the collateral threshold (in USD) for non-batch liquidations is changed
     event NewMinLiquidatableCollateral(uint256 oldMinLiquidatableCollateral, uint256 newMinLiquidatableCollateral);
 
     /// @notice Emitted when supply cap for a vToken is changed
     event NewSupplyCap(VToken indexed vToken, uint256 newSupplyCap);
+
+    /// @notice Emitted when a rewards distributor is added
+    event NewRewardsDistributor(address indexed rewardsDistributor);
+
+    /// @notice Emitted when a market is supported
+    event MarketSupported(VToken vToken);
 
     /// @notice Thrown when collateral factor exceeds the upper bound
     error InvalidCollateralFactor();
@@ -159,29 +128,36 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
     error BorrowCapExceeded(address market, uint256 cap);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address poolRegistry_, address accessControl_) {
-        // Note that the contract is upgradeable. We only initialize immutables in the
-        // constructor. Use initialize() or reinitializers to set the state variables.
-        poolRegistry = poolRegistry_;
-        accessControl = accessControl_;
+    constructor(address poolRegistry_, address accessControl_) ComptrollerStorage(poolRegistry_, accessControl_) {
         _disableInitializers();
     }
 
-    function initialize() external initializer {
+    /**
+     * @param loopLimit Limit for the loops can iterate to avoid the DOS
+     */
+    function initialize(uint256 loopLimit) external initializer {
         __Ownable2Step_init();
+
+        _setMaxLoopsLimit(loopLimit);
+    }
+
+    function isComptroller() external pure override returns (bool) {
+        return _isComptroller;
     }
 
     /**
      * @notice Add assets to be included in account liquidity calculation; enabling them to be used as collateral
      * @param vTokens The list of addresses of the vToken markets to be enabled
      * @return errors An array of NO_ERROR for compatibility with Venus core tooling
-     * @custom:events MarketEntered is emitted for each market on success
+     * @custom:event MarketEntered is emitted for each market on success
      * @custom:error ActionPaused error is thrown if entering any of the markets is paused
      * @custom:error MarketNotListed error is thrown if any of the markets is not listed
      * @custom:access Not restricted
      */
     function enterMarkets(address[] memory vTokens) external override returns (uint256[] memory) {
         uint256 len = vTokens.length;
+
+        _ensureMaxLoops(len);
 
         uint256[] memory results = new uint256[](len);
         for (uint256 i; i < len; ++i) {
@@ -200,7 +176,7 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      *  or be providing necessary collateral for an outstanding borrow.
      * @param vTokenAddress The address of the asset to be removed
      * @return error Always NO_ERROR for compatibility with Venus core tooling
-     * @custom:events MarketExited is emitted on success
+     * @custom:event MarketExited is emitted on success
      * @custom:error ActionPaused error is thrown if exiting the market is paused
      * @custom:error NonzeroBorrowBalance error is thrown if the user has an outstanding borrow in this market
      * @custom:error MarketNotListed error is thrown when the market is not listed
@@ -237,6 +213,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
         // load into memory for faster iteration
         VToken[] memory userAssetList = accountAssets[msg.sender];
         uint256 len = userAssetList.length;
+
+        _ensureMaxLoops(len);
+
         uint256 assetIndex = len;
         for (uint256 i; i < len; ++i) {
             if (userAssetList[i] == vToken) {
@@ -294,6 +273,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         // Keep the flywheel moving
         uint256 rewardDistributorsCount = rewardsDistributors.length;
+
+        _ensureMaxLoops(rewardDistributorsCount);
+
         for (uint256 i; i < rewardDistributorsCount; ++i) {
             rewardsDistributors[i].updateRewardTokenSupplyIndex(vToken);
             rewardsDistributors[i].distributeSupplierRewardToken(vToken, minter);
@@ -323,6 +305,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         // Keep the flywheel moving
         uint256 rewardDistributorsCount = rewardsDistributors.length;
+
+        _ensureMaxLoops(rewardDistributorsCount);
+
         for (uint256 i; i < rewardDistributorsCount; ++i) {
             rewardsDistributors[i].updateRewardTokenSupplyIndex(vToken);
             rewardsDistributors[i].distributeSupplierRewardToken(vToken, redeemer);
@@ -342,6 +327,7 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      * @custom:error PriceError is thrown if the oracle returns an incorrect price for some asset
      * @custom:access Not restricted if vToken is enabled as collateral, otherwise only vToken
      */
+    /// disable-eslint
     function preBorrowHook(
         address vToken,
         address borrower,
@@ -361,9 +347,6 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
             // attempt to add borrower to the market or revert
             _addToMarket(VToken(msg.sender), borrower);
-
-            // it should be impossible to break the important invariant
-            assert(markets[vToken].accountMembership[borrower]);
         }
 
         if (oracle.getUnderlyingPrice(vToken) == 0) {
@@ -392,10 +375,14 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
             revert InsufficientLiquidity();
         }
 
+        Exp memory borrowIndex = Exp({ mantissa: VToken(vToken).borrowIndex() });
+
         // Keep the flywheel moving
         uint256 rewardDistributorsCount = rewardsDistributors.length;
+
+        _ensureMaxLoops(rewardDistributorsCount);
+
         for (uint256 i; i < rewardDistributorsCount; ++i) {
-            Exp memory borrowIndex = Exp({ mantissa: VToken(vToken).borrowIndex() });
             rewardsDistributors[i].updateRewardTokenBorrowIndex(vToken, borrowIndex);
             rewardsDistributors[i].distributeBorrowerRewardToken(vToken, borrower, borrowIndex);
         }
@@ -404,26 +391,15 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
     /**
      * @notice Checks if the account should be allowed to repay a borrow in the given market
      * @param vToken The market to verify the repay against
-     * @param payer The account which would repay the asset
      * @param borrower The account which would borrowed the asset
-     * @param repayAmount The amount of the underlying asset the account would repay
      * @custom:error ActionPaused error is thrown if repayments are paused in this market
      * @custom:error MarketNotListed error is thrown when the market is not listed
      * @custom:access Not restricted
      */
-    function preRepayHook(
-        address vToken,
-        address payer,
-        address borrower,
-        uint256 repayAmount
-    ) external override {
+    function preRepayHook(address vToken, address borrower) external override {
         _checkActionPauseState(vToken, Action.REPAY);
 
         oracle.updatePrice(vToken);
-
-        // Shh - currently unused
-        payer;
-        repayAmount;
 
         if (!markets[vToken].isListed) {
             revert MarketNotListed(address(vToken));
@@ -431,6 +407,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         // Keep the flywheel moving
         uint256 rewardDistributorsCount = rewardsDistributors.length;
+
+        _ensureMaxLoops(rewardDistributorsCount);
+
         for (uint256 i; i < rewardDistributorsCount; ++i) {
             Exp memory borrowIndex = Exp({ mantissa: VToken(vToken).borrowIndex() });
             rewardsDistributors[i].updateRewardTokenBorrowIndex(vToken, borrowIndex);
@@ -442,7 +421,6 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      * @notice Checks if the liquidation should be allowed to occur
      * @param vTokenBorrowed Asset which was borrowed by the borrower
      * @param vTokenCollateral Asset which was used as collateral and will be seized
-     * @param liquidator The address repaying the borrow and seizing the collateral
      * @param borrower The address of the borrower
      * @param repayAmount The amount of underlying being repaid
      * @param skipLiquidityCheck Allows the borrow to be liquidated regardless of the account liquidity
@@ -453,12 +431,10 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      * @custom:error InsufficientShortfall is thrown when trying to liquidate a healthy account
      * @custom:error SnapshotError is thrown if some vToken fails to return the account's supply and borrows
      * @custom:error PriceError is thrown if the oracle returns an incorrect price for some asset
-     * @custom:access Not restricted if vToken is enabled as collateral, otherwise only vToken
      */
     function preLiquidateHook(
         address vTokenBorrowed,
         address vTokenCollateral,
-        address liquidator,
         address borrower,
         uint256 repayAmount,
         bool skipLiquidityCheck
@@ -470,9 +446,6 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         oracle.updatePrice(vTokenBorrowed);
         oracle.updatePrice(vTokenCollateral);
-
-        // Shh - currently unused
-        liquidator;
 
         if (!markets[vTokenBorrowed].isListed) {
             revert MarketNotListed(address(vTokenBorrowed));
@@ -516,7 +489,6 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      * @param seizerContract Contract that tries to seize the asset (either borrowed vToken or Comptroller)
      * @param liquidator The address repaying the borrow and seizing the collateral
      * @param borrower The address of the borrower
-     * @param seizeTokens The number of collateral tokens to seize
      * @custom:error ActionPaused error is thrown if seizing this type of collateral is paused
      * @custom:error MarketNotListed error is thrown if either collateral or borrowed token is not listed
      * @custom:error ComptrollerMismatch error is when seizer contract or seized asset belong to different pools
@@ -526,16 +498,12 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
         address vTokenCollateral,
         address seizerContract,
         address liquidator,
-        address borrower,
-        uint256 seizeTokens
+        address borrower
     ) external override {
         // Pause Action.SEIZE on COLLATERAL to prevent seizing it.
         // If we want to pause liquidating vTokenBorrowed, we should pause
         // Action.LIQUIDATE on it
         _checkActionPauseState(vTokenCollateral, Action.SEIZE);
-
-        // Shh - currently unused
-        seizeTokens;
 
         if (!markets[vTokenCollateral].isListed) {
             revert MarketNotListed(vTokenCollateral);
@@ -560,6 +528,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         // Keep the flywheel moving
         uint256 rewardDistributorsCount = rewardsDistributors.length;
+
+        _ensureMaxLoops(rewardDistributorsCount);
+
         for (uint256 i; i < rewardDistributorsCount; ++i) {
             rewardsDistributors[i].updateRewardTokenSupplyIndex(vTokenCollateral);
             rewardsDistributors[i].distributeSupplierRewardToken(vTokenCollateral, borrower);
@@ -596,6 +567,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         // Keep the flywheel moving
         uint256 rewardDistributorsCount = rewardsDistributors.length;
+
+        _ensureMaxLoops(rewardDistributorsCount);
+
         for (uint256 i; i < rewardDistributorsCount; ++i) {
             rewardsDistributors[i].updateRewardTokenSupplyIndex(vToken);
             rewardsDistributors[i].distributeSupplierRewardToken(vToken, src);
@@ -623,6 +597,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
     function healAccount(address user) external {
         VToken[] memory userAssets = accountAssets[user];
         uint256 userAssetsCount = userAssets.length;
+
+        _ensureMaxLoops(userAssetsCount);
+
         address liquidator = msg.sender;
         // We need all user's markets to be fresh for the computations to be correct
         for (uint256 i; i < userAssetsCount; ++i) {
@@ -634,6 +611,10 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         if (snapshot.totalCollateral > minLiquidatableCollateral) {
             revert CollateralExceedsThreshold(minLiquidatableCollateral, snapshot.totalCollateral);
+        }
+
+        if (snapshot.shortfall == 0) {
+            revert InsufficientShortfall();
         }
 
         // percentage = collateral / (borrows * liquidation incentive)
@@ -698,10 +679,24 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
             revert InsufficientCollateral(collateralToSeize, snapshot.totalCollateral);
         }
 
+        if (snapshot.shortfall == 0) {
+            revert InsufficientShortfall();
+        }
+
         uint256 ordersCount = orders.length;
+
+        _ensureMaxLoops(ordersCount);
+
         for (uint256 i; i < ordersCount; ++i) {
+            if (!markets[address(orders[i].vTokenBorrowed)].isListed) {
+                revert MarketNotListed(address(orders[i].vTokenBorrowed));
+            }
+            if (!markets[address(orders[i].vTokenCollateral)].isListed) {
+                revert MarketNotListed(address(orders[i].vTokenCollateral));
+            }
+
             LiquidationOrder calldata order = orders[i];
-            order.vTokenCollateral.forceLiquidateBorrow(
+            order.vTokenBorrowed.forceLiquidateBorrow(
                 msg.sender,
                 borrower,
                 order.repayAmount,
@@ -710,10 +705,13 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
             );
         }
 
-        VToken[] memory markets = accountAssets[borrower];
-        uint256 marketsCount = markets.length;
+        VToken[] memory borrowMarkets = accountAssets[borrower];
+        uint256 marketsCount = borrowMarkets.length;
+
+        _ensureMaxLoops(marketsCount);
+
         for (uint256 i; i < marketsCount; ++i) {
-            (, uint256 borrowBalance, ) = _safeGetAccountSnapshot(markets[i], borrower);
+            (, uint256 borrowBalance, ) = _safeGetAccountSnapshot(borrowMarkets[i], borrower);
             require(borrowBalance == 0, "Nonzero borrow balance after liquidation");
         }
     }
@@ -721,10 +719,13 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
     /**
      * @notice Sets the closeFactor to use when liquidating borrows
      * @param newCloseFactorMantissa New close factor, scaled by 1e18
-     * @custom:events Emits NewCloseFactor on success
+     * @custom:event Emits NewCloseFactor on success
      * @custom:access Only Governance
      */
     function setCloseFactor(uint256 newCloseFactorMantissa) external onlyOwner {
+        require(closeFactorMaxMantissa >= newCloseFactorMantissa, "Close factor greater than maximum close factor");
+        require(closeFactorMinMantissa <= newCloseFactorMantissa, "Close factor smaller than minimum close factor");
+
         uint256 oldCloseFactorMantissa = closeFactorMantissa;
         closeFactorMantissa = newCloseFactorMantissa;
         emit NewCloseFactor(oldCloseFactorMantissa, closeFactorMantissa);
@@ -736,11 +737,11 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      * @param vToken The market to set the factor on
      * @param newCollateralFactorMantissa The new collateral factor, scaled by 1e18
      * @param newLiquidationThresholdMantissa The new liquidation threshold, scaled by 1e18
-     * @custom:events Emits NewCollateralFactor when collateral factor is updated
+     * @custom:event Emits NewCollateralFactor when collateral factor is updated
      *    and NewLiquidationThreshold when liquidation threshold is updated
      * @custom:error MarketNotListed error is thrown when the market is not listed
      * @custom:error InvalidCollateralFactor error is thrown when collateral factor is too high
-     * @custom:error InvalidLiquidationThreshold error is thrown when liquidation threshold is higher than collateral factor
+     * @custom:error InvalidLiquidationThreshold error is thrown when liquidation threshold is lower than collateral factor
      * @custom:error PriceError is thrown when the oracle returns an invalid price for the asset
      * @custom:access Controlled by AccessControlManager
      */
@@ -762,8 +763,8 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
             revert InvalidCollateralFactor();
         }
 
-        // Ensure that liquidation threshold <= CF
-        if (newLiquidationThresholdMantissa > newCollateralFactorMantissa) {
+        // Ensure that liquidation threshold >= CF
+        if (newLiquidationThresholdMantissa < newCollateralFactorMantissa) {
             revert InvalidLiquidationThreshold();
         }
 
@@ -789,10 +790,12 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      * @notice Sets liquidationIncentive
      * @dev This function is restricted by the AccessControlManager
      * @param newLiquidationIncentiveMantissa New liquidationIncentive scaled by 1e18
-     * @custom:events Emits NewLiquidationIncentive on success
+     * @custom:event Emits NewLiquidationIncentive on success
      * @custom:access Controlled by AccessControlManager
      */
     function setLiquidationIncentive(uint256 newLiquidationIncentiveMantissa) external {
+        require(newLiquidationIncentiveMantissa >= 1e18, "liquidation incentive should be greater than 1e18");
+
         _checkAccessAllowed("setLiquidationIncentive(uint256)");
 
         // Save current value for use in log
@@ -819,7 +822,7 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
             revert MarketAlreadyListed(address(vToken));
         }
 
-        vToken.isVToken(); // Sanity check to make sure its really a VToken
+        require(vToken.isVToken(), "Comptroller: Invalid vToken"); // Sanity check to make sure its really a VToken
 
         Market storage newMarket = markets[address(vToken)];
         newMarket.isListed = true;
@@ -829,15 +832,22 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
         _addMarket(address(vToken));
 
         uint256 rewardDistributorsCount = rewardsDistributors.length;
+
+        _ensureMaxLoops(rewardDistributorsCount);
+
         for (uint256 i; i < rewardDistributorsCount; ++i) {
             rewardsDistributors[i].initializeMarket(address(vToken));
         }
+
+        emit MarketSupported(vToken);
     }
 
     /**
      * @notice Set the given borrow caps for the given vToken markets. Borrowing that brings total borrows to or above borrow cap will revert.
      * @dev This function is restricted by the AccessControlManager
      * @dev A borrow cap of -1 corresponds to unlimited borrowing.
+     * @dev Borrow caps smaller than the current total borrows are accepted. This way, new borrows will not be allowed
+            until the total borrows amount goes below the new borrow cap
      * @param vTokens The addresses of the markets (tokens) to change the borrow caps for
      * @param newBorrowCaps The new borrow cap values in underlying to be set. A value of -1 corresponds to unlimited borrowing.
      * @custom:access Controlled by AccessControlManager
@@ -850,6 +860,8 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         require(numMarkets != 0 && numMarkets == numBorrowCaps, "invalid input");
 
+        _ensureMaxLoops(numMarkets);
+
         for (uint256 i; i < numMarkets; ++i) {
             borrowCaps[address(vTokens[i])] = newBorrowCaps[i];
             emit NewBorrowCap(vTokens[i], newBorrowCaps[i]);
@@ -860,6 +872,8 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      * @notice Set the given supply caps for the given vToken markets. Supply that brings total Supply to or above supply cap will revert.
      * @dev This function is restricted by the AccessControlManager
      * @dev A supply cap of -1 corresponds to unlimited supply.
+     * @dev Supply caps smaller than the current total supplies are accepted. This way, new supplies will not be allowed
+            until the total supplies amount goes below the new supply cap
      * @param vTokens The addresses of the markets (tokens) to change the supply caps for
      * @param newSupplyCaps The new supply cap values in underlying to be set. A value of -1 corresponds to unlimited supply.
      * @custom:access Controlled by AccessControlManager
@@ -870,6 +884,8 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         require(vTokensCount != 0, "invalid number of markets");
         require(vTokensCount == newSupplyCaps.length, "invalid number of markets");
+
+        _ensureMaxLoops(vTokensCount);
 
         for (uint256 i; i < vTokensCount; ++i) {
             supplyCaps[address(vTokens[i])] = newSupplyCaps[i];
@@ -894,6 +910,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
 
         uint256 marketsCount = marketsList.length;
         uint256 actionsCount = actionsList.length;
+
+        _ensureMaxLoops(marketsCount);
+
         for (uint256 marketIdx; marketIdx < marketsCount; ++marketIdx) {
             for (uint256 actionIdx; actionIdx < actionsCount; ++actionIdx) {
                 _setActionPaused(address(marketsList[marketIdx]), actionsList[actionIdx], paused);
@@ -922,11 +941,15 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      * @dev Only callable by the admin
      * @param _rewardsDistributor Address of the RewardDistributor contract to add
      * @custom:access Only Governance
+     * @custom:event Emits NewRewardsDistributor with distributor address
      */
     function addRewardsDistributor(RewardsDistributor _rewardsDistributor) external onlyOwner {
-        require(rewardsDistributorExists[address(_rewardsDistributor)] == false, "already exists");
+        require(!rewardsDistributorExists[address(_rewardsDistributor)], "already exists");
 
         uint256 rewardsDistributorsLength = rewardsDistributors.length;
+
+        _ensureMaxLoops(rewardsDistributorsLength);
+
         for (uint256 i; i < rewardsDistributorsLength; ++i) {
             address rewardToken = address(rewardsDistributors[i].rewardToken());
             require(
@@ -939,9 +962,102 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
         rewardsDistributorExists[address(_rewardsDistributor)] = true;
 
         uint256 marketsCount = allMarkets.length;
+
+        _ensureMaxLoops(marketsCount);
+
         for (uint256 i; i < marketsCount; ++i) {
             _rewardsDistributor.initializeMarket(address(allMarkets[i]));
         }
+
+        emit NewRewardsDistributor(address(_rewardsDistributor));
+    }
+
+    /**
+     * @notice Sets a new PriceOracle for the Comptroller
+     * @dev Only callable by the admin
+     * @param newOracle Address of the new PriceOracle to set
+     * @custom:event Emits NewPriceOracle on success
+     */
+    function setPriceOracle(PriceOracle newOracle) external onlyOwner {
+        require(address(newOracle) != address(0), "invalid price oracle address");
+
+        PriceOracle oldOracle = oracle;
+        oracle = newOracle;
+        emit NewPriceOracle(oldOracle, newOracle);
+    }
+
+    /**
+     * @notice Determine the current account liquidity with respect to collateral requirements
+     * @dev The interface of this function is intentionally kept compatible with Compound and Venus Core
+     * @param account The account get liquidity for
+     * @return error Always NO_ERROR for compatibility with Venus core tooling
+     * @return liquidity Account liquidity in excess of collateral requirements,
+     * @return shortfall Account shortfall below collateral requirements
+     */
+    function getAccountLiquidity(address account)
+        external
+        view
+        returns (
+            uint256 error,
+            uint256 liquidity,
+            uint256 shortfall
+        )
+    {
+        AccountLiquiditySnapshot memory snapshot = _getCurrentLiquiditySnapshot(account, _getCollateralFactor);
+        return (NO_ERROR, snapshot.liquidity, snapshot.shortfall);
+    }
+
+    /**
+     * @notice Determine what the account liquidity would be if the given amounts were redeemed/borrowed
+     * @dev The interface of this function is intentionally kept compatible with Compound and Venus Core
+     * @param vTokenModify The market to hypothetically redeem/borrow in
+     * @param account The account to determine liquidity for
+     * @param redeemTokens The number of tokens to hypothetically redeem
+     * @param borrowAmount The amount of underlying to hypothetically borrow
+     * @return error Always NO_ERROR for compatibility with Venus core tooling
+     * @return liquidity Hypothetical account liquidity in excess of collateral requirements,
+     * @return shortfall Hypothetical account shortfall below collateral requirements
+     */
+    function getHypotheticalAccountLiquidity(
+        address account,
+        address vTokenModify,
+        uint256 redeemTokens,
+        uint256 borrowAmount
+    )
+        external
+        view
+        returns (
+            uint256 error,
+            uint256 liquidity,
+            uint256 shortfall
+        )
+    {
+        AccountLiquiditySnapshot memory snapshot = _getHypotheticalLiquiditySnapshot(
+            account,
+            VToken(vTokenModify),
+            redeemTokens,
+            borrowAmount,
+            _getCollateralFactor
+        );
+        return (NO_ERROR, snapshot.liquidity, snapshot.shortfall);
+    }
+
+    /**
+     * @notice Return all of the markets
+     * @dev The automatic getter may be used to access an individual market.
+     * @return markets The list of market addresses
+     */
+    function getAllMarkets() external view override returns (VToken[] memory) {
+        return allMarkets;
+    }
+
+    /**
+     * @notice Check if a market is marked as listed (active)
+     * @param vToken vToken Address for the market to check
+     * @return listed True if listed otherwise false
+     */
+    function isMarketListed(VToken vToken) external view returns (bool) {
+        return markets[address(vToken)].isListed;
     }
 
     /*** Assets You Are In ***/
@@ -1026,94 +1142,12 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
         return rewardSpeeds;
     }
 
-    /*** Admin Functions ***/
-
     /**
-     * @notice Sets a new PriceOracle for the Comptroller
-     * @dev Only callable by the admin
-     * @param newOracle Address of the new PriceOracle to set
-     * @custom:events Emits NewPriceOracle on success
+     * @notice Return all reward distributors for this pool
+     * @return Array of RewardDistributor addresses
      */
-    function setPriceOracle(PriceOracle newOracle) public onlyOwner {
-        PriceOracle oldOracle = oracle;
-        oracle = newOracle;
-        emit NewPriceOracle(oldOracle, newOracle);
-    }
-
-    /*** Liquidity/Liquidation Calculations ***/
-
-    /**
-     * @notice Determine the current account liquidity with respect to collateral requirements
-     * @dev The interface of this function is intentionally kept compatible with Compound and Venus Core
-     * @param account The account get liquidity for
-     * @return error Always NO_ERROR for compatibility with Venus core tooling
-     * @return liquidity Account liquidity in excess of collateral requirements,
-     * @return shortfall Account shortfall below collateral requirements
-     */
-    function getAccountLiquidity(address account)
-        public
-        view
-        returns (
-            uint256 error,
-            uint256 liquidity,
-            uint256 shortfall
-        )
-    {
-        AccountLiquiditySnapshot memory snapshot = _getCurrentLiquiditySnapshot(account, _getCollateralFactor);
-        return (NO_ERROR, snapshot.liquidity, snapshot.shortfall);
-    }
-
-    /**
-     * @notice Determine what the account liquidity would be if the given amounts were redeemed/borrowed
-     * @dev The interface of this function is intentionally kept compatible with Compound and Venus Core
-     * @param vTokenModify The market to hypothetically redeem/borrow in
-     * @param account The account to determine liquidity for
-     * @param redeemTokens The number of tokens to hypothetically redeem
-     * @param borrowAmount The amount of underlying to hypothetically borrow
-     * @return error Always NO_ERROR for compatibility with Venus core tooling
-     * @return liquidity Hypothetical account liquidity in excess of collateral requirements,
-     * @return shortfall Hypothetical account shortfall below collateral requirements
-     */
-    function getHypotheticalAccountLiquidity(
-        address account,
-        address vTokenModify,
-        uint256 redeemTokens,
-        uint256 borrowAmount
-    )
-        public
-        view
-        returns (
-            uint256 error,
-            uint256 liquidity,
-            uint256 shortfall
-        )
-    {
-        AccountLiquiditySnapshot memory snapshot = _getHypotheticalLiquiditySnapshot(
-            account,
-            VToken(vTokenModify),
-            redeemTokens,
-            borrowAmount,
-            _getCollateralFactor
-        );
-        return (NO_ERROR, snapshot.liquidity, snapshot.shortfall);
-    }
-
-    /**
-     * @notice Return all of the markets
-     * @dev The automatic getter may be used to access an individual market.
-     * @return markets The list of market addresses
-     */
-    function getAllMarkets() public view override returns (VToken[] memory) {
-        return allMarkets;
-    }
-
-    /**
-     * @notice Check if a market is marked as listed (active)
-     * @param vToken vToken Address for the market to check
-     * @return listed True if listed otherwise false
-     */
-    function isMarketListed(VToken vToken) public view returns (bool) {
-        return markets[address(vToken)].isListed;
+    function getRewardDistributors() public view returns (RewardsDistributor[] memory) {
+        return rewardsDistributors;
     }
 
     /**
@@ -1137,6 +1171,14 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
             markets[address(vToken)].collateralFactorMantissa == 0 &&
             actionPaused(address(vToken), Action.BORROW) &&
             vToken.reserveFactorMantissa() == 1e18;
+    }
+
+    /**
+     * @notice Set the limit for the loops can iterate to avoid the DOS
+     * @param limit Limit for the max loops can execute at a time
+     */
+    function setMaxLoopsLimit(uint256 limit) external onlyOwner {
+        _setMaxLoopsLimit(limit);
     }
 
     /**
@@ -1175,6 +1217,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
      */
     function _addMarket(address vToken) internal {
         uint256 marketsCount = allMarkets.length;
+
+        _ensureMaxLoops(marketsCount);
+
         for (uint256 i; i < marketsCount; ++i) {
             if (allMarkets[i] == VToken(vToken)) {
                 revert MarketAlreadyListed(vToken);
@@ -1200,7 +1245,7 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
     }
 
     /**
-     * @dev Internal function to check that vTokens can be safelly redeemed for the underlying asset
+     * @dev Internal function to check that vTokens can be safely redeemed for the underlying asset.
      * @param vToken Address of the vTokens to redeem
      * @param redeemer Account redeeming the tokens
      * @param redeemTokens The number of tokens to redeem
@@ -1271,6 +1316,9 @@ contract Comptroller is Ownable2StepUpgradeable, ComptrollerV1Storage, Comptroll
         // For each asset the account is in
         VToken[] memory assets = accountAssets[account];
         uint256 assetsCount = assets.length;
+
+        _ensureMaxLoops(assetsCount);
+
         for (uint256 i; i < assetsCount; ++i) {
             VToken asset = assets[i];
 

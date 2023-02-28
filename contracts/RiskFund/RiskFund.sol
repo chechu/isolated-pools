@@ -8,20 +8,21 @@ import "../VToken.sol";
 import "../Pool/PoolRegistry.sol";
 import "../Pool/PoolRegistryInterface.sol";
 import "../IPancakeswapV2Router.sol";
-import "../Pool/PoolRegistry.sol";
 import "./ReserveHelpers.sol";
+import "./IRiskFund.sol";
+import "../Shortfall/IShortfall.sol";
+
+import "../MaxLoopsLimitHelper.sol";
 
 /**
  * @dev This contract does not support BNB.
  */
-contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers {
+contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers, MaxLoopsLimitHelper, IRiskFund {
     using SafeERC20Upgradeable for IERC20Upgradeable;
 
-    address private poolRegistry;
     address private pancakeSwapRouter;
     uint256 private minAmountToConvert;
     address private convertibleBaseAsset;
-    address private auctionContractAddress;
     address private accessControl;
     address private shortfall;
 
@@ -31,11 +32,8 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
     /// @notice Emitted when pool registry address is updated
     event PoolRegistryUpdated(address indexed oldPoolRegistry, address indexed newPoolRegistry);
 
-    /// @notice Emitted when convertible base asset address is updated
-    event ConvertableBaseAssetUpdated(address indexed oldBaseAsset, address indexed newBaseAsset);
-
-    /// @notice Emitted when auction contract address is updated
-    event AuctionContractUpdated(address indexed oldAuctionContract, address indexed newAuctionContract);
+    /// @notice Emitted when shortfall contract address is updated
+    event ShortfallContractUpdated(address indexed oldShortfallContract, address indexed newShortfallContract);
 
     /// @notice Emitted when PancakeSwap router contract address is updated
     event PancakeSwapRouterUpdated(address indexed oldPancakeSwapRouter, address indexed newPancakeSwapRouter);
@@ -45,6 +43,12 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
 
     /// @notice Emitted when minimum amount to convert is updated
     event MinAmountToConvertUpdated(uint256 oldMinAmountToConvert, uint256 newMinAmountToConvert);
+
+    /// @notice Emitted when pools assets are swapped
+    event SwappedPoolsAssets(address[] markets, uint256[] amountsOutMin, uint256 totalAmount);
+
+    /// @notice Emitted when reserves are transferred for auction
+    event TransferredReserveForAuction(address comptroller, uint256 amount);
 
     /// @dev Note that the contract is upgradeable. Use initialize() or reinitializers
     ///      to set the state variables.
@@ -56,21 +60,22 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
     /**
      * @dev Initializes the deployer to owner.
      * @param _pancakeSwapRouter Address of the PancakeSwap router
-     * @param _minAmountToConvert Asset should be worth of min amount to convert into base asset
+     * @param _minAmountToConvert Minimum amount assets must be worth to convert into base asset
      * @param _convertibleBaseAsset Address of the base asset
      * @param _accessControl Address of the access control contract.
-     * @param _shortfall Address of the shortfall contract.
      */
     function initialize(
         address _pancakeSwapRouter,
         uint256 _minAmountToConvert,
         address _convertibleBaseAsset,
         address _accessControl,
-        address _shortfall
+        uint256 _loopsLimit
     ) external initializer {
         require(_pancakeSwapRouter != address(0), "Risk Fund: Pancake swap address invalid");
         require(_convertibleBaseAsset != address(0), "Risk Fund: Base asset address invalid");
-        require(_minAmountToConvert > 0, "Risk Fund: Invalid min amout to convert");
+        require(_minAmountToConvert > 0, "Risk Fund: Invalid min amount to convert");
+        require(_accessControl != address(0), "Risk Fund: Access control address invalid");
+        require(_loopsLimit > 0, "Risk Fund: Loops limit can not be zero");
 
         __Ownable2Step_init();
 
@@ -78,7 +83,8 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
         minAmountToConvert = _minAmountToConvert;
         convertibleBaseAsset = _convertibleBaseAsset;
         accessControl = _accessControl;
-        shortfall = _shortfall;
+
+        _setMaxLoopsLimit(_loopsLimit);
     }
 
     /**
@@ -93,25 +99,19 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
     }
 
     /**
-     * @dev Convertible base asset setter
-     * @param _convertibleBaseAsset Address of the asset.
+     * @dev Shortfall contract address setter
+     * @param _shortfallContractAddress Address of the auction contract.
      */
-    function setConvertableBaseAsset(address _convertibleBaseAsset) external onlyOwner {
-        require(_convertibleBaseAsset != address(0), "Risk Fund: Asset address invalid");
-        address oldBaseAsset = convertibleBaseAsset;
-        convertibleBaseAsset = _convertibleBaseAsset;
-        emit ConvertableBaseAssetUpdated(oldBaseAsset, _convertibleBaseAsset);
-    }
+    function setShortfallContractAddress(address _shortfallContractAddress) external onlyOwner {
+        require(_shortfallContractAddress != address(0), "Risk Fund: Shortfall contract address invalid");
+        require(
+            IShortfall(_shortfallContractAddress).convertibleBaseAsset() == convertibleBaseAsset,
+            "Risk Fund: Base asset doesn't match"
+        );
 
-    /**
-     * @dev Auction contract address setter
-     * @param _auctionContractAddress Address of the auction contract.
-     */
-    function setAuctionContractAddress(address _auctionContractAddress) external onlyOwner {
-        require(_auctionContractAddress != address(0), "Risk Fund: Auction contract address invalid");
-        address oldAuctionContractAddress = auctionContractAddress;
-        auctionContractAddress = _auctionContractAddress;
-        emit AuctionContractUpdated(oldAuctionContractAddress, _auctionContractAddress);
+        address oldShortfallContractAddress = shortfall;
+        shortfall = _shortfallContractAddress;
+        emit ShortfallContractUpdated(oldShortfallContractAddress, _shortfallContractAddress);
     }
 
     /**
@@ -127,10 +127,10 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
 
     /**
      * @dev Min amount to convert setter
-     * @param _minAmountToConvert Min amout to convert.
+     * @param _minAmountToConvert Min amount to convert.
      */
     function setMinAmountToConvert(uint256 _minAmountToConvert) external onlyOwner {
-        require(_minAmountToConvert > 0, "Risk Fund: Invalid min amout to convert");
+        require(_minAmountToConvert > 0, "Risk Fund: Invalid min amount to convert");
         uint256 oldMinAmountToConvert = minAmountToConvert;
         minAmountToConvert = _minAmountToConvert;
         emit MinAmountToConvertUpdated(oldMinAmountToConvert, _minAmountToConvert);
@@ -138,12 +138,13 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
 
     /**
      * @notice Swap array of pool assets into base asset's tokens of at least a mininum amount.
-     * @param underlyingAssets Array of assets to swap for base asset
+     * @param markets Array of vTokens whose assets to swap for base asset
      * @param amountsOutMin Minimum amount to recieve for swap
      * @return Number of swapped tokens.
      */
-    function swapPoolsAssets(address[] calldata underlyingAssets, uint256[] calldata amountsOutMin)
+    function swapPoolsAssets(address[] calldata markets, uint256[] calldata amountsOutMin)
         external
+        override
         returns (uint256)
     {
         bool canSwapPoolsAsset = AccessControlManager(accessControl).isAllowedToCall(
@@ -152,20 +153,27 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
         );
         require(canSwapPoolsAsset, "Risk fund: Not authorized to swap pool assets.");
         require(poolRegistry != address(0), "Risk fund: Invalid pool registry.");
-        require(
-            underlyingAssets.length == amountsOutMin.length,
-            "Risk fund: underlyingAssets and amountsOutMin are unequal lengths"
-        );
+        require(markets.length == amountsOutMin.length, "Risk fund: markets and amountsOutMin are unequal lengths");
 
         uint256 totalAmount;
-        uint256 underlyingAssetsCount = underlyingAssets.length;
-        for (uint256 i; i < underlyingAssetsCount; ++i) {
-            VToken vToken = VToken(underlyingAssets[i]);
+        uint256 marketsCount = markets.length;
+
+        _ensureMaxLoops(marketsCount);
+
+        for (uint256 i; i < marketsCount; ++i) {
+            VToken vToken = VToken(markets[i]);
             address comptroller = address(vToken.comptroller());
+
+            PoolRegistry.VenusPool memory pool = PoolRegistry(poolRegistry).getPoolByComptroller(comptroller);
+            require(pool.comptroller == comptroller, "comptroller doesn't exist pool registry");
+            require(Comptroller(comptroller).isMarketListed(vToken), "market is not listed");
+
             uint256 swappedTokens = _swapAsset(vToken, comptroller, amountsOutMin[i]);
             poolReserves[comptroller] = poolReserves[comptroller] + swappedTokens;
             totalAmount = totalAmount + swappedTokens;
         }
+
+        emit SwappedPoolsAssets(markets, amountsOutMin, totalAmount);
 
         return totalAmount;
     }
@@ -176,14 +184,23 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
      * @param amount Amount to be transferred to auction contract.
      * @return Number reserved tokens.
      */
-    function transferReserveForAuction(address comptroller, uint256 amount) external returns (uint256) {
+    function transferReserveForAuction(address comptroller, uint256 amount) external override returns (uint256) {
         require(msg.sender == shortfall, "Risk fund: Only callable by Shortfall contract");
-
-        require(auctionContractAddress != address(0), "Risk Fund: Auction contract invalid address.");
         require(amount <= poolReserves[comptroller], "Risk Fund: Insufficient pool reserve.");
         poolReserves[comptroller] = poolReserves[comptroller] - amount;
-        IERC20Upgradeable(convertibleBaseAsset).safeTransfer(auctionContractAddress, amount);
+        IERC20Upgradeable(convertibleBaseAsset).safeTransfer(shortfall, amount);
+
+        emit TransferredReserveForAuction(comptroller, amount);
+
         return amount;
+    }
+
+    /**
+     * @notice Set the limit for the loops can iterate to avoid the DOS
+     * @param limit Limit for the max loops can execute at a time
+     */
+    function setMaxLoopsLimit(uint256 limit) external onlyOwner {
+        _setMaxLoopsLimit(limit);
     }
 
     /**
@@ -191,8 +208,17 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
      * @param comptroller Comptroller address of the pool.
      * @return Number of reserved tokens.
      */
-    function getPoolReserve(address comptroller) external view returns (uint256) {
+    function getPoolReserve(address comptroller) external view override returns (uint256) {
         return poolReserves[comptroller];
+    }
+
+    /**
+     * @dev Update the reserve of the asset for the specific pool after transferring to risk fund.
+     * @param comptroller  Comptroller address(pool).
+     * @param asset Asset address.
+     */
+    function updateAssetsState(address comptroller, address asset) public override(IRiskFund, ReserveHelpers) {
+        super.updateAssetsState(comptroller, asset);
     }
 
     /**
@@ -208,6 +234,7 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
         uint256 amountOutMin
     ) internal returns (uint256) {
         require(amountOutMin != 0, "RiskFund: amountOutMin must be greater than 0 to swap vToken");
+        require(amountOutMin >= minAmountToConvert, "RiskFund: amountOutMin should be greater than minAmountToConvert");
         uint256 totalAmount;
 
         address underlyingAsset = VTokenInterface(address(vToken)).underlying();
@@ -246,6 +273,7 @@ contract RiskFund is Ownable2StepUpgradeable, ExponentialNoError, ReserveHelpers
                 }
             }
         }
+
         return totalAmount;
     }
 }

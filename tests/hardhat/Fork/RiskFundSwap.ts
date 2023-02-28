@@ -5,7 +5,7 @@ import { expect } from "chai";
 import { parseUnits } from "ethers/lib/utils";
 import { ethers, upgrades } from "hardhat";
 
-import { convertToUnit } from "../../../helpers/utils";
+import { AddressOne, convertToUnit } from "../../../helpers/utils";
 import {
   AccessControlManager,
   Beacon,
@@ -41,6 +41,7 @@ let riskFund: RiskFund;
 let pancakeSwapRouter: PancakeRouter | FakeContract<PancakeRouter>;
 let busdUser: any;
 let usdtUser: any;
+const maxLoopsLimit = 150;
 
 const FORK_MAINNET = process.env.FORK_MAINNET === "true";
 const ADD_RESERVE_AMOUNT = parseUnits("100", 18);
@@ -89,7 +90,7 @@ const initMockToken = async (name: string, symbol: string, user: SignerWithAddre
 const riskFundFixture = async (): Promise<void> => {
   const [admin, user, proxyAdmin, ...signers] = await ethers.getSigners();
   if (FORK_MAINNET) {
-    //MAINNET USER WITH BALANCE
+    // MAINNET USER WITH BALANCE
     busdUser = await initMainnetUser("0xf977814e90da44bfa03b6295a0616a897441acec");
     usdtUser = await initMainnetUser("0xf977814e90da44bfa03b6295a0616a897441acec");
 
@@ -120,11 +121,7 @@ const riskFundFixture = async (): Promise<void> => {
   fakeAccessControlManager.isAllowedToCall.returns(true);
 
   const Shortfall = await ethers.getContractFactory("Shortfall");
-  const shortfall = await upgrades.deployProxy(Shortfall, [
-    ethers.constants.AddressZero,
-    ethers.constants.AddressZero,
-    parseUnits("10000", 18),
-  ]);
+  const shortfall = await upgrades.deployProxy(Shortfall, [BUSD.address, AddressOne, parseUnits("10000", 18)]);
 
   const RiskFund = await ethers.getContractFactory("RiskFund");
   riskFund = await upgrades.deployProxy(RiskFund, [
@@ -132,8 +129,10 @@ const riskFundFixture = async (): Promise<void> => {
     parseUnits("10", 18),
     BUSD.address,
     fakeAccessControlManager.address,
-    shortfall.address,
+    maxLoopsLimit,
   ]);
+
+  await riskFund.setShortfallContractAddress(shortfall.address);
 
   const fakeProtocolIncome = await smock.fake<RiskFund>("RiskFund");
   const ProtocolShareReserve = await ethers.getContractFactory("ProtocolShareReserve");
@@ -151,6 +150,8 @@ const riskFundFixture = async (): Promise<void> => {
     riskFund.address,
     protocolShareReserve.address,
   ]);
+
+  await protocolShareReserve.setPoolRegistry(poolRegistry.address);
 
   await shortfall.setPoolRegistry(poolRegistry.address);
 
@@ -192,6 +193,7 @@ const riskFundFixture = async (): Promise<void> => {
     _liquidationIncentive,
     _minLiquidatableCollateral,
     priceOracle.address,
+    maxLoopsLimit,
   );
 
   // Setup Proxies

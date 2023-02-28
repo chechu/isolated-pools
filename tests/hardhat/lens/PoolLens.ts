@@ -38,6 +38,7 @@ let closeFactor2: BigNumberish;
 let liquidationIncentive1: BigNumberish;
 let liquidationIncentive2: BigNumberish;
 const minLiquidatableCollateral = convertToUnit(100, 18);
+const maxLoopsLimit = 150;
 
 const poolRegistryFixture = async (): Promise<PoolRegistry> => {
   const VTokenProxyFactory = await ethers.getContractFactory("VTokenProxyFactory");
@@ -112,12 +113,13 @@ describe("PoolLens - PoolView Tests", async function () {
       liquidationIncentive1,
       minLiquidatableCollateral,
       priceOracle.address,
+      maxLoopsLimit,
     );
 
     closeFactor2 = convertToUnit(0.05, 18);
     liquidationIncentive2 = convertToUnit(1, 18);
 
-    //Registering the second pool
+    // Registering the second pool
     await poolRegistry.createRegistryPool(
       "Pool 2",
       comptrollerBeacon.address,
@@ -125,6 +127,7 @@ describe("PoolLens - PoolView Tests", async function () {
       liquidationIncentive2,
       minLiquidatableCollateral,
       priceOracle.address,
+      maxLoopsLimit,
     );
 
     const MockDAI = await ethers.getContractFactory("MockToken");
@@ -238,7 +241,7 @@ describe("PoolLens - PoolView Tests", async function () {
     await comptroller1Proxy.enterMarkets([vDAI.address, vWBTC.address]);
     await comptroller1Proxy.connect(owner).enterMarkets([vDAI.address, vWBTC.address]);
 
-    //Set Oracle
+    // Set Oracle
     await comptroller1Proxy.setPriceOracle(priceOracle.address);
 
     const PoolLens = await ethers.getContractFactory("PoolLens");
@@ -263,9 +266,8 @@ describe("PoolLens - PoolView Tests", async function () {
     expect(venusPool_1_Actual[10]).equal(closeFactor1);
     expect(venusPool_1_Actual[11]).equal(liquidationIncentive1);
     expect(venusPool_1_Actual[12]).equal(minLiquidatableCollateral);
-    expect(venusPool_1_Actual[13]).equal(0);
 
-    const vTokens_Actual = venusPool_1_Actual[14];
+    const vTokens_Actual = venusPool_1_Actual[13];
     expect(vTokens_Actual.length).equal(2);
 
     // get VToken for Asset-1 : WBTC
@@ -293,7 +295,6 @@ describe("PoolLens - PoolView Tests", async function () {
     expect(venusPool_1_Actual[10]).equal(closeFactor2);
     expect(venusPool_1_Actual[11]).equal(liquidationIncentive2);
     expect(venusPool_1_Actual[12]).equal(minLiquidatableCollateral);
-    expect(venusPool_1_Actual[13]).equal(0);
   });
 
   it("getPoolData By Comptroller", async function () {
@@ -311,9 +312,8 @@ describe("PoolLens - PoolView Tests", async function () {
     expect(poolData[10]).equal(closeFactor1);
     expect(poolData[11]).equal(liquidationIncentive1);
     expect(poolData[12]).equal(minLiquidatableCollateral);
-    expect(poolData[13]).equal(0);
 
-    const vTokens_Actual = poolData[14];
+    const vTokens_Actual = poolData[13];
     expect(vTokens_Actual.length).equal(2);
 
     // get VToken for Asset-1 : WBTC
@@ -375,12 +375,13 @@ describe("PoolLens - VTokens Query Tests", async function () {
       liquidationIncentive1,
       minLiquidatableCollateral,
       priceOracle.address,
+      maxLoopsLimit,
     );
 
     closeFactor2 = convertToUnit(0.05, 18);
     liquidationIncentive2 = convertToUnit(1, 18);
 
-    //Registering the second pool
+    // Registering the second pool
     await poolRegistry.createRegistryPool(
       "Pool 2",
       comptrollerBeacon.address,
@@ -388,6 +389,7 @@ describe("PoolLens - VTokens Query Tests", async function () {
       liquidationIncentive2,
       minLiquidatableCollateral,
       priceOracle.address,
+      maxLoopsLimit,
     );
 
     const MockDAI = await ethers.getContractFactory("MockToken");
@@ -496,6 +498,38 @@ describe("PoolLens - VTokens Query Tests", async function () {
     poolLens = await PoolLens.deploy();
   });
 
+  it("get all info of pools user specific", async function () {
+    const vTokenAddress_WBTC = await poolRegistry.getVTokenForAsset(comptroller1Proxy.address, mockWBTC.address);
+    const vTokenAddress_DAI = await poolRegistry.getVTokenForAsset(comptroller1Proxy.address, mockDAI.address);
+    const res = await poolLens.callStatic.vTokenBalancesAll([vTokenAddress_WBTC, vTokenAddress_DAI], ownerAddress);
+    expect(res[0][0]).equal(vTokenAddress_WBTC);
+    expect(res[1][0]).equal(vTokenAddress_DAI);
+  });
+
+  it("get underlying price", async function () {
+    const vTokenAddress_DAI = await poolRegistry.getVTokenForAsset(comptroller1Proxy.address, mockDAI.address);
+    const res = await poolLens.vTokenUnderlyingPrice(vTokenAddress_DAI);
+    expect(res[1]).equal(convertToUnit(1, 18));
+  });
+
+  it("get underlying price all", async function () {
+    const vTokenAddress_WBTC = await poolRegistry.getVTokenForAsset(comptroller1Proxy.address, mockWBTC.address);
+    const vTokenAddress_DAI = await poolRegistry.getVTokenForAsset(comptroller1Proxy.address, mockDAI.address);
+    const res = await poolLens.vTokenUnderlyingPriceAll([vTokenAddress_DAI, vTokenAddress_WBTC]);
+    expect(res[0][1]).equal(convertToUnit(1, 18));
+    expect(res[1][1]).equal(convertToUnit("21000.34", 28));
+  });
+
+  it("get underlying price all", async function () {
+    const vTokenAddress_WBTC = await poolRegistry.getVTokenForAsset(comptroller1Proxy.address, mockWBTC.address);
+    const vTokenAddress_WBTCPool = await poolLens.getVTokenForAsset(
+      poolRegistry.address,
+      comptroller1Proxy.address,
+      mockWBTC.address,
+    );
+    expect(vTokenAddress_WBTC).equal(vTokenAddress_WBTCPool);
+  });
+
   it("is correct for WBTC as underlyingAsset", async () => {
     // get CToken for Asset-1 : WBTC
     const vTokenAddress_WBTC = await poolRegistry.getVTokenForAsset(comptroller1Proxy.address, mockWBTC.address);
@@ -503,14 +537,14 @@ describe("PoolLens - VTokens Query Tests", async function () {
 
     const vTokenMetadata_Actual_Parsed: any = cullTuple(vTokenMetadata_Actual);
     expect(vTokenMetadata_Actual_Parsed["vToken"]).equal(vTokenAddress_WBTC);
-    expect(vTokenMetadata_Actual_Parsed["exchangeRateCurrent"]).equal("100000000");
+    expect(vTokenMetadata_Actual_Parsed["exchangeRateCurrent"]).equal(convertToUnit(1, 18));
     expect(vTokenMetadata_Actual_Parsed["supplyRatePerBlock"]).equal("0");
     expect(vTokenMetadata_Actual_Parsed["borrowRatePerBlock"]).equal("0");
     expect(vTokenMetadata_Actual_Parsed["stableBorrowRatePerBlock"]).equal("0");
     expect(vTokenMetadata_Actual_Parsed["reserveFactorMantissa"]).equal("0");
     expect(vTokenMetadata_Actual_Parsed["totalBorrows"]).equal("0");
     expect(vTokenMetadata_Actual_Parsed["totalReserves"]).equal("0");
-    expect(vTokenMetadata_Actual_Parsed["totalSupply"]).equal(convertToUnit(1, 18));
+    expect(vTokenMetadata_Actual_Parsed["totalSupply"]).equal(convertToUnit(1, 8));
     expect(vTokenMetadata_Actual_Parsed["totalCash"]).equal(convertToUnit(1, 8));
     expect(vTokenMetadata_Actual_Parsed["isListed"]).equal("true");
     expect(vTokenMetadata_Actual_Parsed["collateralFactorMantissa"]).equal("700000000000000000");
@@ -523,7 +557,7 @@ describe("PoolLens - VTokens Query Tests", async function () {
     const vTokenAddress_WBTC = await poolRegistry.getVTokenForAsset(comptroller1Proxy.address, mockWBTC.address);
     const vTokenBalance = await poolLens.callStatic.vTokenBalances(vTokenAddress_WBTC, ownerAddress);
     expect(vTokenBalance["balanceOfUnderlying"]).equal(convertToUnit(1, 8));
-    expect(vTokenBalance["balanceOf"]).equal(convertToUnit(1, 18));
+    expect(vTokenBalance["balanceOf"]).equal(convertToUnit(1, 8));
   });
 });
 

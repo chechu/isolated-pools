@@ -27,6 +27,11 @@ contract UpgradedVToken is VToken {
      * @param stableRateModel_ The address of the stable interest rate model
      */
 
+    /// @notice We added this new function to test contract upgrade
+    function version() external view returns (uint256) {
+        return 2;
+    }
+
     function initializeV2(
         address underlying_,
         ComptrollerInterface comptroller_,
@@ -57,10 +62,5 @@ contract UpgradedVToken is VToken {
 
     function getTokenUnderlying() public view returns (address) {
         return underlying;
-    }
-
-    /// @notice We added this new function to test contract upgrade
-    function version() external view returns (uint256) {
-        return 2;
     }
 }

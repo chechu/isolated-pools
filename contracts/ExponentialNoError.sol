@@ -9,11 +9,6 @@ pragma solidity 0.8.13;
  *         `Exp({mantissa: 5100000000000000000})`.
  */
 contract ExponentialNoError {
-    uint256 constant expScale = 1e18;
-    uint256 constant doubleScale = 1e36;
-    uint256 constant halfExpScale = expScale / 2;
-    uint256 constant mantissaOne = expScale;
-
     struct Exp {
         uint256 mantissa;
     }
@@ -21,6 +16,11 @@ contract ExponentialNoError {
     struct Double {
         uint256 mantissa;
     }
+
+    uint256 constant expScale = 1e18;
+    uint256 constant doubleScale = 1e36;
+    uint256 constant halfExpScale = expScale / 2;
+    uint256 constant mantissaOne = expScale;
 
     /**
      * @dev Truncates the given exp to a whole number value.
@@ -56,27 +56,6 @@ contract ExponentialNoError {
      */
     function lessThanExp(Exp memory left, Exp memory right) internal pure returns (bool) {
         return left.mantissa < right.mantissa;
-    }
-
-    /**
-     * @dev Checks if left Exp <= right Exp.
-     */
-    function lessThanOrEqualExp(Exp memory left, Exp memory right) internal pure returns (bool) {
-        return left.mantissa <= right.mantissa;
-    }
-
-    /**
-     * @dev Checks if left Exp > right Exp.
-     */
-    function greaterThanExp(Exp memory left, Exp memory right) internal pure returns (bool) {
-        return left.mantissa > right.mantissa;
-    }
-
-    /**
-     * @dev returns true if Exp is exactly zero
-     */
-    function isZeroExp(Exp memory value) internal pure returns (bool) {
-        return value.mantissa == 0;
     }
 
     function safe224(uint256 n, string memory errorMessage) internal pure returns (uint224) {

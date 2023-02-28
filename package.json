@@ -1,10 +1,9 @@
 {
   "name": "@venusprotocol/isolated-pools",
-  "version": "0.0.14",
+  "version": "0.0.18-develop.2",
   "description": "",
   "files": [
     "artifacts",
-    "networks",
     "deploy",
     "helpers",
     "contracts",
@@ -23,7 +22,7 @@
     "lint:ts:fix": "eslint --fix --ext .js,.ts .",
     "prettier": "prettier --write \"**/*.{js,json,md,sol,ts,yaml,yml}\"",
     "prettier:check": "prettier --check \"**/*.{js,json,md,sol,ts,yaml,yml}\"",
-    "build": "rm -rf dist && tsc --declaration && hardhat compile && cp -r ./{package.json,yarn.lock,artifacts,networks,contracts,deployments} dist/",
+    "build": "rm -rf dist && tsc --declaration && hardhat compile && cp -r ./{package.json,yarn.lock,artifacts,contracts,deployments} dist/",
     "publish:dist": "yarn build && yarn publish dist -f --access public",
     "docgen": "hardhat docgen"
   },
@@ -56,7 +55,8 @@
     "@types/node": "^12.20.50",
     "@typescript-eslint/eslint-plugin": "^5.27.1",
     "@typescript-eslint/parser": "^5.27.1",
-    "@venusprotocol/oracle": "^1.4.1",
+    "@venusprotocol/oracle": "^1.6.1",
+    "@venusprotocol/venus-protocol": "^0.6.0",
     "bignumber.js": "9.0.0",
     "chai": "^4.3.6",
     "dotenv": "^10.0.0",

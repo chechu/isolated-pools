@@ -9,8 +9,11 @@ import "@venusprotocol/oracle/contracts/PriceOracle.sol";
 import "../VToken.sol";
 import "../ComptrollerInterface.sol";
 import "../RiskFund/IRiskFund.sol";
+import "./IShortfall.sol";
+import "../Pool/PoolRegistry.sol";
+import "../Pool/PoolRegistryInterface.sol";
 
-contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
+contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, IShortfall {
     using SafeERC20Upgradeable for IERC20Upgradeable;
 
     /// @notice Type of auction
@@ -61,8 +64,8 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
     /// @notice Time to wait for first bidder. wait for 100 blocks
     uint256 public constant waitForFirstBidder = 100;
 
-    /// @notice BUSD contract address
-    IERC20Upgradeable private BUSD;
+    /// @notice base asset contract address
+    address public convertibleBaseAsset;
 
     /// @notice Auctions for each pool
     mapping(address => Auction) public auctions;
@@ -112,14 +115,18 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
      * @param _minimumPoolBadDebt Minimum bad debt in BUSD for a pool to start auction
      */
     function initialize(
-        IERC20Upgradeable _BUSD,
+        address _convertibleBaseAsset,
         IRiskFund _riskFund,
         uint256 _minimumPoolBadDebt
     ) external initializer {
+        require(_convertibleBaseAsset != address(0), "invalid base asset address");
+        require(address(_riskFund) != address(0), "invalid risk fund address");
+        require(_minimumPoolBadDebt != 0, "invalid minimum pool bad debt");
+
         __Ownable2Step_init();
         __ReentrancyGuard_init();
         minimumPoolBadDebt = _minimumPoolBadDebt;
-        BUSD = _BUSD;
+        convertibleBaseAsset = _convertibleBaseAsset;
         riskFund = _riskFund;
     }
 
@@ -127,7 +134,7 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
      * @notice Place a bid greater than the previous in an ongoing auction
      * @param comptroller Comptroller address of the pool
      * @param bidBps The bid percent of the risk fund or bad debt depending on auction type
-     * @custom:events Emits BidPlaced event on success
+     * @custom:event Emits BidPlaced event on success
      */
     function placeBid(address comptroller, uint256 bidBps) external nonReentrant {
         Auction storage auction = auctions[comptroller];
@@ -177,7 +184,7 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
     /**
      * @notice Close an auction
      * @param comptroller Comptroller address of the pool
-     * @custom:events Emits AuctionClosed event on successful close
+     * @custom:event Emits AuctionClosed event on successful close
      */
     function closeAuction(address comptroller) external nonReentrant {
         Auction storage auction = auctions[comptroller];
@@ -206,25 +213,25 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
                 marketsDebt[i] = auction.marketDebt[auction.markets[i]];
             }
 
-            auction.markets[i].badDebtRecovered(auction.marketDebt[auction.markets[i]]);
+            auction.markets[i].badDebtRecovered(marketsDebt[i]);
         }
 
-        uint256 riskFundBidAmount = auction.seizedRiskFund;
+        uint256 riskFundBidAmount;
 
         if (auction.auctionType == AuctionType.LARGE_POOL_DEBT) {
-            riskFund.transferReserveForAuction(comptroller, riskFundBidAmount);
-            BUSD.safeTransfer(auction.highestBidder, riskFundBidAmount);
+            riskFundBidAmount = auction.seizedRiskFund;
         } else {
             riskFundBidAmount = (auction.seizedRiskFund * auction.highestBidBps) / MAX_BPS;
-            riskFund.transferReserveForAuction(comptroller, riskFundBidAmount);
-            BUSD.transfer(auction.highestBidder, riskFundBidAmount);
         }
+
+        uint256 transferredAmount = riskFund.transferReserveForAuction(comptroller, riskFundBidAmount);
+        IERC20Upgradeable(convertibleBaseAsset).safeTransfer(auction.highestBidder, riskFundBidAmount);
 
         emit AuctionClosed(
             comptroller,
             auction.highestBidder,
             auction.highestBidBps,
-            riskFundBidAmount,
+            transferredAmount,
             auction.markets,
             marketsDebt
         );
@@ -233,7 +240,7 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
     /**
      * @notice Restart an auction
      * @param comptroller Address of the pool
-     * @custom:events Emits AuctionRestarted event on successful restart
+     * @custom:event Emits AuctionRestarted event on successful restart
      */
     function restartAuction(address comptroller) external {
         Auction storage auction = auctions[comptroller];
@@ -253,7 +260,7 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
     /**
      * @notice Update minimum pool bad debt to start auction
      * @param _minimumPoolBadDebt Minimum bad debt in BUSD for a pool to start auction
-     * @custom:events Emits MinimumPoolBadDebtUpdated on success
+     * @custom:event Emits MinimumPoolBadDebtUpdated on success
      * @custom:access Restricted to owner
      */
     function updateMinimumPoolBadDebt(uint256 _minimumPoolBadDebt) public onlyOwner {
@@ -266,7 +273,7 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
      * @notice Sets the pool registry this shortfall supports
      * @dev After Pool Registry is deployed we need to set the pool registry address
      * @param _poolRegistry Address of pool registry contract
-     * @custom:events Emits PoolRegistryUpdated on success
+     * @custom:event Emits PoolRegistryUpdated on success
      * @custom:access Restricted to owner
      */
     function setPoolRegistry(address _poolRegistry) public onlyOwner {
@@ -279,10 +286,13 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
     /**
      * @notice Start a auction when there is not currently one active
      * @param comptroller Comptroller address of the pool
-     * @custom:events Emits AuctionStarted event on success
+     * @custom:event Emits AuctionStarted event on success
      * @custom:access Restricted to owner
      */
     function startAuction(address comptroller) public onlyOwner {
+        PoolRegistryInterface.VenusPool memory pool = PoolRegistry(poolRegistry).getPoolByComptroller(comptroller);
+        require(pool.comptroller == comptroller, "comptroller doesn't exist pool registry");
+
         Auction storage auction = auctions[comptroller];
         require(
             (auction.startBlock == 0 && auction.status == AuctionStatus.NOT_STARTED) ||
@@ -290,12 +300,13 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
             "auction is on-going"
         );
 
+        auction.highestBidBps = 0;
+        auction.highestBidBlock = 0;
+
         uint256 marketsCount = auction.markets.length;
         for (uint256 i; i < marketsCount; ++i) {
             VToken vToken = auction.markets[i];
             auction.marketDebt[vToken] = 0;
-            auction.highestBidBps = 0;
-            auction.highestBidBlock = 0;
         }
 
         delete auction.markets;
@@ -326,7 +337,9 @@ contract Shortfall is Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
         uint256 remainingRiskFundBalance = riskFundBalance;
         uint256 incentivizedRiskFundBalance = poolBadDebt + ((poolBadDebt * incentiveBps) / MAX_BPS);
         if (incentivizedRiskFundBalance >= riskFundBalance) {
-            auction.startBidBps = ((MAX_BPS - incentiveBps) * remainingRiskFundBalance) / poolBadDebt;
+            auction.startBidBps =
+                (MAX_BPS * MAX_BPS * remainingRiskFundBalance) /
+                (poolBadDebt * (MAX_BPS + incentiveBps));
             remainingRiskFundBalance = 0;
             auction.auctionType = AuctionType.LARGE_POOL_DEBT;
         } else {

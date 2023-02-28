@@ -9,13 +9,6 @@ import "./InterestRateModel.sol";
  * @notice Version 2 modifies Version 1 by enabling updateable parameters.
  */
 abstract contract BaseJumpRateModelV2 is InterestRateModel {
-    event NewInterestParams(
-        uint256 baseRatePerBlock,
-        uint256 multiplierPerBlock,
-        uint256 jumpMultiplierPerBlock,
-        uint256 kink
-    );
-
     uint256 private constant BASE = 1e18;
 
     /**
@@ -48,6 +41,13 @@ abstract contract BaseJumpRateModelV2 is InterestRateModel {
      */
     uint256 public kink;
 
+    event NewInterestParams(
+        uint256 baseRatePerBlock,
+        uint256 multiplierPerBlock,
+        uint256 jumpMultiplierPerBlock,
+        uint256 kink
+    );
+
     /**
      * @notice Construct an interest rate model
      * @param baseRatePerYear The approximate target base APR, as a mantissa (scaled by BASE)
@@ -63,6 +63,8 @@ abstract contract BaseJumpRateModelV2 is InterestRateModel {
         uint256 kink_,
         address owner_
     ) {
+        require(owner_ != address(0), "invalid owner address");
+
         owner = owner_;
 
         updateJumpRateModelInternal(baseRatePerYear, multiplierPerYear, jumpMultiplierPerYear, kink_);
@@ -87,24 +89,6 @@ abstract contract BaseJumpRateModelV2 is InterestRateModel {
     }
 
     /**
-     * @notice Calculates the current borrow rate per block, with the error code expected by the market
-     * @param utilizationRate The utilization rate per total borrows and cash available
-     * @return The borrow rate percentage per block as a mantissa (scaled by BASE)
-     */
-    function getBorrowRateInternal(uint256 utilizationRate) internal view returns (uint256) {
-        if (utilizationRate <= kink) {
-            return ((utilizationRate * multiplierPerBlock) / BASE) + baseRatePerBlock;
-        } else {
-            uint256 normalRate = ((kink * multiplierPerBlock) / BASE) + baseRatePerBlock;
-            uint256 excessUtil;
-            unchecked {
-                excessUtil = utilizationRate - kink;
-            }
-            return ((excessUtil * jumpMultiplierPerBlock) / BASE) + normalRate;
-        }
-    }
-
-    /**
      * @notice Internal function to update the parameters of the interest rate model
      * @param baseRatePerYear The approximate target base APR, as a mantissa (scaled by BASE)
      * @param multiplierPerYear The rate of increase in interest rate with respect to utilization (scaled by BASE)
@@ -123,5 +107,23 @@ abstract contract BaseJumpRateModelV2 is InterestRateModel {
         kink = kink_;
 
         emit NewInterestParams(baseRatePerBlock, multiplierPerBlock, jumpMultiplierPerBlock, kink);
+    }
+
+    /**
+     * @notice Calculates the current borrow rate per block, with the error code expected by the market
+     * @param utilizationRate The utilization rate per total borrows and cash available
+     * @return The borrow rate percentage per block as a mantissa (scaled by BASE)
+     */
+    function getBorrowRateInternal(uint256 utilizationRate) internal view returns (uint256) {
+        if (utilizationRate <= kink) {
+            return ((utilizationRate * multiplierPerBlock) / BASE) + baseRatePerBlock;
+        } else {
+            uint256 normalRate = ((kink * multiplierPerBlock) / BASE) + baseRatePerBlock;
+            uint256 excessUtil;
+            unchecked {
+                excessUtil = utilizationRate - kink;
+            }
+            return ((excessUtil * jumpMultiplierPerBlock) / BASE) + normalRate;
+        }
     }
 }

@@ -30,13 +30,15 @@ type PauseFixture = {
   names: string[];
 };
 
+const maxLoopsLimit = 150;
+
 async function pauseFixture(): Promise<PauseFixture> {
   const poolRegistry = await smock.fake<PoolRegistry>("PoolRegistry");
   const accessControl = await smock.fake<AccessControlManager>("AccessControlManager");
   const Comptroller = await smock.mock<Comptroller__factory>("Comptroller");
-  const comptroller = await upgrades.deployProxy(Comptroller, [], {
+  const comptroller = await upgrades.deployProxy(Comptroller, [maxLoopsLimit], {
     constructorArgs: [poolRegistry.address, accessControl.address],
-    initializer: "initialize()",
+    initializer: "initialize(uint256)",
   });
   const oracle = await smock.fake<PriceOracle>("PriceOracle");
 
@@ -46,6 +48,7 @@ async function pauseFixture(): Promise<PauseFixture> {
   const [OMG, ZRX, BAT, SKT] = await Promise.all(
     names.map(async name => {
       const vToken = await smock.fake<VToken>("VToken");
+      vToken.isVToken.returns(true);
       if (name !== "sketch") {
         const poolRegistryBalance = await poolRegistry.provider.getBalance(poolRegistry.address);
         if (poolRegistryBalance.isZero()) {
@@ -145,6 +148,19 @@ describe("Comptroller", () => {
       expect(await comptroller.actionPaused(BAT.address, 4)).to.equal(true);
       expect(await comptroller.actionPaused(BAT.address, 5)).to.equal(false);
       expect(await comptroller.actionPaused(BAT.address, 6)).to.equal(true);
+    });
+
+    it("reverts if the market is paused", async () => {
+      await comptroller.setActionsPaused([OMG.address], [8], true);
+      await expect(comptroller.exitMarket(OMG.address))
+        .to.be.revertedWithCustomError(comptroller, "ActionPaused")
+        .withArgs(OMG.address, 8);
+    });
+
+    it("reverts if market is not listed", async () => {
+      await expect(comptroller.exitMarket(SKT.address))
+        .to.be.revertedWithCustomError(comptroller, "MarketNotListed")
+        .withArgs(SKT.address);
     });
   });
 });

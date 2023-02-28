@@ -7,13 +7,14 @@ import { constants } from "ethers";
 import { parseUnits } from "ethers/lib/utils";
 import { ethers, upgrades } from "hardhat";
 
-import { convertToUnit } from "../../helpers/utils";
+import { AddressOne, convertToUnit } from "../../helpers/utils";
 import {
   AccessControlManager,
   Comptroller,
   Comptroller__factory,
   IRiskFund,
   MockToken,
+  PoolRegistry,
   PriceOracle,
   Shortfall,
   Shortfall__factory,
@@ -25,7 +26,7 @@ const { expect } = chai;
 chai.use(smock.matchers);
 
 let owner: SignerWithAddress;
-let poolRegistry: SignerWithAddress;
+let poolRegistry: FakeContract<PoolRegistry>;
 let someone: SignerWithAddress;
 let bidder1: SignerWithAddress;
 let bidder2: SignerWithAddress;
@@ -36,7 +37,7 @@ let mockDAI: MockToken;
 let mockWBTC: MockToken;
 let vDAI: MockContract<VToken>;
 let vWBTC: MockContract<VToken>;
-let comptroller: MockContract<Comptroller>;
+let comptroller: FakeContract<Comptroller>;
 let fakeAccessControlManager: FakeContract<AccessControlManager>;
 let fakePriceOracle: FakeContract<PriceOracle>;
 
@@ -61,10 +62,13 @@ async function shortfallFixture() {
     parseUnits(minimumPoolBadDebt, "18"),
   ]);
 
-  [owner, poolRegistry, someone, bidder1, bidder2] = await ethers.getSigners();
+  [owner, someone, bidder1, bidder2] = await ethers.getSigners();
+
+  poolRegistry = await smock.fake<PoolRegistry>("PoolRegistry");
+
   await shortfall.setPoolRegistry(poolRegistry.address);
 
-  //Deploy Mock Tokens
+  // Deploy Mock Tokens
   const MockDAI = await ethers.getContractFactory("MockToken");
   mockDAI = await MockDAI.deploy("MakerDAO", "DAI", 18);
   await mockDAI.faucet(convertToUnit(1000000000, 18));
@@ -79,6 +83,14 @@ async function shortfallFixture() {
   const Comptroller = await smock.mock<Comptroller__factory>("Comptroller");
   comptroller = await Comptroller.deploy(poolRegistry.address, fakeAccessControlManager.address);
   poolAddress = comptroller.address;
+
+  poolRegistry.getPoolByComptroller.returns({
+    name: "test",
+    creator: AddressOne,
+    comptroller: comptroller.address,
+    blockPosted: 0,
+    timestampPosted: 0,
+  });
 
   const VToken = await smock.mock<VToken__factory>("VToken");
   vDAI = await VToken.deploy();
@@ -226,7 +238,7 @@ describe("Shortfall: Tests", async function () {
       expect(auction.auctionType).equal(0);
       expect(auction.seizedRiskFund).equal(parseUnits(riskFundBalance, 18));
 
-      const startBidBps = new BigNumber("900000").dividedBy("52000.68").toFixed(2);
+      const startBidBps = new BigNumber("10000000000").dividedBy("52000.68").dividedBy("11000").toFixed(2);
       expect(auction.startBidBps.toString()).equal(new BigNumber(startBidBps).times(100).toString());
     });
 
@@ -311,8 +323,10 @@ describe("Shortfall: Tests", async function () {
       const originalBalance = await mockBUSD.balanceOf(bidder2.address);
       await mine((await shortfall.nextBidderBlockLimit()).toNumber() + 2);
 
-      //simulate transferReserveForAuction
+      // simulate transferReserveForAuction
       await mockBUSD.transfer(shortfall.address, parseUnits(riskFundBalance, 18));
+      fakeRiskFund.transferReserveForAuction.returns(parseUnits("10000", 18));
+
       await expect(shortfall.closeAuction(poolAddress))
         .to.emit(shortfall, "AuctionClosed")
         .withArgs(
@@ -328,10 +342,10 @@ describe("Shortfall: Tests", async function () {
       expect(auction.status).equal(2);
 
       expect(vWBTC.badDebtRecovered).to.have.been.calledOnce;
-      expect(vWBTC.badDebtRecovered).to.have.been.calledWith(parseUnits("2", 8));
+      expect(vWBTC.badDebtRecovered).to.have.been.calledWith("36000000");
 
       expect(vDAI.badDebtRecovered).to.have.been.calledOnce;
-      expect(vDAI.badDebtRecovered).to.have.been.calledWith(parseUnits("10000", 18));
+      expect(vDAI.badDebtRecovered).to.have.been.calledWith(parseUnits("1800", 18));
       expect(await mockBUSD.balanceOf(bidder2.address)).to.be.equal(originalBalance.add(auction.seizedRiskFund));
     });
   });
@@ -425,8 +439,9 @@ describe("Shortfall: Tests", async function () {
 
       await mine((await shortfall.nextBidderBlockLimit()).toNumber() + 2);
 
-      //simulate transferReserveForAuction
+      // simulate transferReserveForAuction
       await mockBUSD.transfer(shortfall.address, auction.seizedRiskFund);
+      fakeRiskFund.transferReserveForAuction.returns("6138067320000000000000");
 
       await expect(shortfall.closeAuction(poolAddress))
         .to.emit(shortfall, "AuctionClosed")

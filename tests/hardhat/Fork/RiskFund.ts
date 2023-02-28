@@ -52,6 +52,7 @@ let pancakeSwapRouter: PancakeRouter | FakeContract<PancakeRouter>;
 let busdUser: any;
 let usdcUser: any;
 let usdtUser: any;
+const maxLoopsLimit = 150;
 
 const FORK_MAINNET = process.env.FORK_MAINNET === "true";
 const someNonzeroAddress = "0x0000000000000000000000000000000000000001";
@@ -138,6 +139,7 @@ const riskFundFixture = async (): Promise<void> => {
     to: shortfall.address,
     value: ethers.utils.parseEther("1"), // 1 ether
   });
+  await shortfall.convertibleBaseAsset.returns(BUSD.address);
 
   const RiskFund = await ethers.getContractFactory("RiskFund");
   riskFund = await upgrades.deployProxy(RiskFund, [
@@ -145,8 +147,9 @@ const riskFundFixture = async (): Promise<void> => {
     convertToUnit(10, 18),
     BUSD.address,
     accessControlManager.address,
-    shortfall.address,
+    150,
   ]);
+  await riskFund.setShortfallContractAddress(shortfall.address);
 
   const fakeProtocolIncome = await smock.fake<RiskFund>("RiskFund");
   const ProtocolShareReserve = await ethers.getContractFactory("ProtocolShareReserve");
@@ -164,6 +167,8 @@ const riskFundFixture = async (): Promise<void> => {
     riskFund.address,
     protocolShareReserve.address,
   ]);
+
+  await protocolShareReserve.setPoolRegistry(poolRegistry.address);
 
   await accessControlManager.giveCallPermission(
     ethers.constants.AddressZero,
@@ -249,6 +254,7 @@ const riskFundFixture = async (): Promise<void> => {
     _liquidationIncentive,
     _minLiquidatableCollateral,
     priceOracle.address,
+    maxLoopsLimit,
   );
 
   // Registering the second pool
@@ -259,6 +265,7 @@ const riskFundFixture = async (): Promise<void> => {
     _liquidationIncentive,
     _minLiquidatableCollateral,
     priceOracle.address,
+    maxLoopsLimit,
   );
 
   // Registering the third pool
@@ -269,6 +276,7 @@ const riskFundFixture = async (): Promise<void> => {
     _liquidationIncentive,
     _minLiquidatableCollateral,
     priceOracle.address,
+    maxLoopsLimit,
   );
 
   // Setup Proxies
@@ -523,44 +531,26 @@ describe("Risk Fund: Tests", function () {
       });
     });
 
-    describe("setConvertableBaseAsset", async function () {
-      it("Reverts on invalid Pool registry address", async function () {
-        await expect(riskFund.setConvertableBaseAsset(constants.AddressZero)).to.be.rejectedWith(
-          "Risk Fund: Asset address invalid",
-        );
-      });
-
-      it("fails if called by a non-owner", async function () {
-        await expect(riskFund.connect(usdcUser).setConvertableBaseAsset(BUSD.address)).to.be.rejectedWith(
-          "Ownable: caller is not the owner",
-        );
-      });
-
-      it("emits ConvertableBaseAssetUpdated event", async function () {
-        const newBaseAsset = await smock.fake<MockToken>("PoolRegistry");
-        const tx = riskFund.setConvertableBaseAsset(newBaseAsset.address);
-        await expect(tx).to.emit(riskFund, "ConvertableBaseAssetUpdated").withArgs(BUSD.address, newBaseAsset.address);
-      });
-    });
-
-    describe("setAuctionContractAddress", async function () {
+    describe("setShortfallContractAddress", async function () {
       it("Reverts on invalid Auction contract address", async function () {
-        await expect(riskFund.setAuctionContractAddress(constants.AddressZero)).to.be.rejectedWith(
-          "Risk Fund: Auction contract address invalid",
+        await expect(riskFund.setShortfallContractAddress(constants.AddressZero)).to.be.rejectedWith(
+          "Risk Fund: Shortfall contract address invalid",
         );
       });
 
       it("fails if called by a non-owner", async function () {
-        await expect(riskFund.connect(usdcUser).setAuctionContractAddress(someNonzeroAddress)).to.be.rejectedWith(
+        await expect(riskFund.connect(usdcUser).setShortfallContractAddress(someNonzeroAddress)).to.be.rejectedWith(
           "Ownable: caller is not the owner",
         );
       });
 
-      it("emits AuctionContractUpdated event", async function () {
-        const tx = riskFund.setAuctionContractAddress(someNonzeroAddress);
+      it("emits ShortfallContractUpdated event", async function () {
+        const newShortfall = await smock.fake<Shortfall>("Shortfall");
+        await newShortfall.convertibleBaseAsset.returns(BUSD.address);
+        const tx = riskFund.setShortfallContractAddress(newShortfall.address);
         await expect(tx)
-          .to.emit(riskFund, "AuctionContractUpdated")
-          .withArgs(constants.AddressZero, someNonzeroAddress);
+          .to.emit(riskFund, "ShortfallContractUpdated")
+          .withArgs(shortfall.address, newShortfall.address);
       });
     });
 
@@ -589,13 +579,13 @@ describe("Risk Fund: Tests", function () {
       it("fails if called with incorrect arguments", async function () {
         await expect(
           riskFund.swapPoolsAssets([cUSDT.address, cUSDC.address], [convertToUnit(10, 18)]),
-        ).to.be.rejectedWith("Risk fund: underlyingAssets and amountsOutMin are unequal lengths");
+        ).to.be.rejectedWith("Risk fund: markets and amountsOutMin are unequal lengths");
       });
     });
 
     describe("setMinAmountToConvert", async function () {
       it("reverts on invalid min amount to convert", async function () {
-        await expect(riskFund.setMinAmountToConvert(0)).to.be.rejectedWith("Risk Fund: Invalid min amout to convert");
+        await expect(riskFund.setMinAmountToConvert(0)).to.be.rejectedWith("Risk Fund: Invalid min amount to convert");
       });
 
       it("fails if called by a non-owner", async function () {
@@ -754,11 +744,11 @@ describe("Risk Fund: Tests", function () {
   describe("Transfer to Auction contract", async function () {
     it("Revert while transfering funds to Auction contract", async function () {
       await expect(
-        riskFund.connect(shortfall.wallet).transferReserveForAuction(comptroller1Proxy.address, convertToUnit(30, 18)),
-      ).to.be.rejectedWith("Risk Fund: Auction contract invalid address.");
+        riskFund.connect(busdUser).transferReserveForAuction(comptroller1Proxy.address, convertToUnit(30, 18)),
+      ).to.be.rejectedWith("Risk fund: Only callable by Shortfall contract");
 
-      const auctionContract = "0x0000000000000000000000000000000000000001";
-      await riskFund.setAuctionContractAddress(auctionContract);
+      const auctionContract = shortfall.address;
+      await riskFund.setShortfallContractAddress(auctionContract);
 
       await expect(
         riskFund.connect(shortfall.wallet).transferReserveForAuction(comptroller1Proxy.address, convertToUnit(100, 18)),
@@ -766,8 +756,7 @@ describe("Risk Fund: Tests", function () {
     });
 
     it("Transfer funds to auction contact", async function () {
-      const auctionContract = "0x0000000000000000000000000000000000000001";
-      await riskFund.setAuctionContractAddress(auctionContract);
+      await riskFund.setShortfallContractAddress(shortfall.address);
 
       await USDC.connect(usdcUser).approve(cUSDC.address, convertToUnit(1000, 18));
 
@@ -798,11 +787,11 @@ describe("Risk Fund: Tests", function () {
         ],
       );
 
-      const beforeTransfer = await BUSD.balanceOf(auctionContract);
+      const beforeTransfer = await BUSD.balanceOf(shortfall.address);
       await riskFund
         .connect(shortfall.wallet)
         .transferReserveForAuction(comptroller1Proxy.address, convertToUnit(20, 18));
-      const afterTransfer = await BUSD.balanceOf(auctionContract);
+      const afterTransfer = await BUSD.balanceOf(shortfall.address);
       const remainingBalance = await BUSD.balanceOf(riskFund.address);
       const poolReserve = await riskFund.getPoolReserve(comptroller1Proxy.address);
 
@@ -813,8 +802,9 @@ describe("Risk Fund: Tests", function () {
 
     it("Should revert the transfer to auction transaction", async function () {
       const [admin] = await ethers.getSigners();
-      const auctionContract = "0x0000000000000000000000000000000000000001";
-      await riskFund.setAuctionContractAddress(auctionContract);
+      const auctionContract = await smock.fake<Shortfall>("Shortfall");
+      await auctionContract.convertibleBaseAsset.returns(BUSD.address);
+      await riskFund.setShortfallContractAddress(auctionContract.address);
 
       await USDC.connect(usdcUser).approve(cUSDC.address, convertToUnit(1000, 18));
 
@@ -857,8 +847,10 @@ describe("Risk Fund: Tests", function () {
     });
 
     it("Transfer single asset from multiple pools to riskFund.", async function () {
-      const auctionContract = "0x0000000000000000000000000000000000000001";
-      await riskFund.setAuctionContractAddress(auctionContract);
+      const auctionContract = await smock.fake<Shortfall>("Shortfall");
+      await auctionContract.convertibleBaseAsset.returns(BUSD.address);
+
+      await riskFund.setShortfallContractAddress(auctionContract.address);
 
       await USDC.connect(usdcUser).approve(cUSDC.address, convertToUnit(1000, 18));
 

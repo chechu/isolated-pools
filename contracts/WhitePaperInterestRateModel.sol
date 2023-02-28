@@ -9,8 +9,6 @@ import "./InterestRateModel.sol";
  * @notice The parameterized model described in section 2.4 of the original Compound Protocol whitepaper
  */
 contract WhitePaperInterestRateModel is InterestRateModel {
-    event NewInterestParams(uint256 baseRatePerBlock, uint256 multiplierPerBlock);
-
     uint256 private constant BASE = 1e18;
 
     /**
@@ -27,6 +25,8 @@ contract WhitePaperInterestRateModel is InterestRateModel {
      * @notice The base interest rate which is the y-intercept when utilization rate is 0
      */
     uint256 public baseRatePerBlock;
+
+    event NewInterestParams(uint256 baseRatePerBlock, uint256 multiplierPerBlock);
 
     /**
      * @notice Construct an interest rate model
@@ -47,5 +47,25 @@ contract WhitePaperInterestRateModel is InterestRateModel {
      */
     function getBorrowRate(uint256 utilizationRate) public view override returns (uint256) {
         return ((utilizationRate * multiplierPerBlock) / BASE) + baseRatePerBlock;
+    }
+
+    /**
+     * @notice Calculates the utilization rate of the market: `borrows / (cash + borrows - reserves)`
+     * @param cash The amount of cash in the market
+     * @param borrows The amount of borrows in the market
+     * @param reserves The amount of reserves in the market (currently unused)
+     * @return The utilization rate as a mantissa between [0, BASE]
+     */
+    function utilizationRate(
+        uint256 cash,
+        uint256 borrows,
+        uint256 reserves
+    ) public pure returns (uint256) {
+        // Utilization rate is 0 when there are no borrows
+        if (borrows == 0) {
+            return 0;
+        }
+
+        return (borrows * BASE) / (cash + borrows - reserves);
     }
 }

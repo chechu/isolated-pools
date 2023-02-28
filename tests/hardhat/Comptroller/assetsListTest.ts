@@ -28,6 +28,7 @@ describe("assetListTest", () => {
   let BAT: FakeContract<VToken>;
   let SKT: FakeContract<VToken>;
   let allTokens: FakeContract<VToken>[];
+  const maxLoopsLimit = 150;
 
   type AssetListFixture = {
     accessControl: FakeContract<AccessControlManager>;
@@ -45,9 +46,9 @@ describe("assetListTest", () => {
     poolRegistry = await smock.fake<PoolRegistry>("PoolRegistry");
     const accessControl = await smock.fake<AccessControlManager>("AccessControlManager");
     const Comptroller = await smock.mock<Comptroller__factory>("Comptroller");
-    const comptroller = await upgrades.deployProxy(Comptroller, [], {
+    const comptroller = await upgrades.deployProxy(Comptroller, [maxLoopsLimit], {
       constructorArgs: [poolRegistry.address, accessControl.address],
-      initializer: "initialize()",
+      initializer: "initialize(uint256)",
     });
     const oracle = await smock.fake<PriceOracle>("PriceOracle");
 
@@ -57,6 +58,7 @@ describe("assetListTest", () => {
     const [OMG, ZRX, BAT, SKT] = await Promise.all(
       names.map(async name => {
         const vToken = await smock.fake<VToken>("VToken");
+        vToken.isVToken.returns(true);
         if (name !== "sketch") {
           const poolRegistryBalance = await poolRegistry.provider.getBalance(poolRegistry.address);
           if (poolRegistryBalance.isZero()) {

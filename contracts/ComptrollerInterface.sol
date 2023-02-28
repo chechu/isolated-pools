@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: BSD-3-Clause
-pragma solidity ^0.8.10;
+pragma solidity 0.8.13;
 
 import "@venusprotocol/oracle/contracts/PriceOracle.sol";
 import "./VToken.sol";
+import "./Rewards/RewardsDistributor.sol";
 
-abstract contract ComptrollerInterface {
-    /// @notice Indicator that this is a Comptroller contract (for inspection)
-    bool public constant isComptroller = true;
-
+interface ComptrollerInterface {
     /*** Assets You Are In ***/
 
-    function enterMarkets(address[] calldata vTokens) external virtual returns (uint256[] memory);
+    function enterMarkets(address[] calldata vTokens) external returns (uint256[] memory);
 
-    function exitMarket(address vToken) external virtual returns (uint256);
+    function exitMarket(address vToken) external returns (uint256);
 
     /*** Policy Hooks ***/
 
@@ -20,50 +18,45 @@ abstract contract ComptrollerInterface {
         address vToken,
         address minter,
         uint256 mintAmount
-    ) external virtual;
+    ) external;
 
     function preRedeemHook(
         address vToken,
         address redeemer,
         uint256 redeemTokens
-    ) external virtual;
+    ) external;
 
     function preBorrowHook(
         address vToken,
         address borrower,
         uint256 borrowAmount
-    ) external virtual;
+    ) external;
 
-    function preRepayHook(
-        address vToken,
-        address payer,
-        address borrower,
-        uint256 repayAmount
-    ) external virtual;
+    function preRepayHook(address vToken, address borrower) external;
 
     function preLiquidateHook(
         address vTokenBorrowed,
         address vTokenCollateral,
-        address liquidator,
         address borrower,
         uint256 repayAmount,
         bool skipLiquidityCheck
-    ) external virtual;
+    ) external;
 
     function preSeizeHook(
         address vTokenCollateral,
         address vTokenBorrowed,
         address liquidator,
-        address borrower,
-        uint256 seizeTokens
-    ) external virtual;
+        address borrower
+    ) external;
 
     function preTransferHook(
         address vToken,
         address src,
         address dst,
         uint256 transferTokens
-    ) external virtual;
+    ) external;
+
+    function isComptroller() external view returns (bool);
 
     function preSwapBorrowRateModeHook(address vToken) external virtual;
 
@@ -73,31 +66,23 @@ abstract contract ComptrollerInterface {
         address vTokenBorrowed,
         address vTokenCollateral,
         uint256 repayAmount
-    ) external view virtual returns (uint256, uint256);
+    ) external view returns (uint256, uint256);
 
-    function getAllMarkets() external view virtual returns (VToken[] memory);
+    function getAllMarkets() external view returns (VToken[] memory);
 }
 
-abstract contract ComptrollerViewInterface {
-    function markets(address) external view virtual returns (bool, uint256);
+interface ComptrollerViewInterface {
+    function markets(address) external view returns (bool, uint256);
 
-    function oracle() external view virtual returns (PriceOracle);
+    function oracle() external view returns (PriceOracle);
 
-    function getAssetsIn(address) external view virtual returns (VToken[] memory);
+    function getAssetsIn(address) external view returns (VToken[] memory);
 
-    function compSpeeds(address) external view virtual returns (uint256);
+    function closeFactorMantissa() external view returns (uint256);
 
-    function pauseGuardian() external view virtual returns (address);
+    function liquidationIncentiveMantissa() external view returns (uint256);
 
-    function priceOracle() external view virtual returns (address);
+    function minLiquidatableCollateral() external view returns (uint256);
 
-    function closeFactorMantissa() external view virtual returns (uint256);
-
-    function maxAssets() external view virtual returns (uint256);
-
-    function liquidationIncentiveMantissa() external view virtual returns (uint256);
-
-    function minLiquidatableCollateral() external view virtual returns (uint256);
-
-    function getXVSRewardsByMarket(address) external view virtual returns (uint256, uint256);
+    function getRewardDistributors() external view returns (RewardsDistributor[] memory);
 }

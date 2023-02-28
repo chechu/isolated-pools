@@ -188,7 +188,7 @@ describe("VToken", function () {
     });
 
     it("continues if fresh", async () => {
-      //await expect(
+      // await expect(
       await vToken.accrueInterest();
 
       await mintFresh(vToken, minter, mintAmount);
@@ -227,13 +227,11 @@ describe("VToken", function () {
       const result = await mintFresh(vToken, minter, mintAmount);
       const afterBalances = await getBalances([vToken], [minterAddress]);
 
-      expect(result) // eslint-disable-line @typescript-eslint/no-floating-promises
-        .to.emit(vToken, "Mint")
-        .withArgs(minterAddress, mintAmount, mintTokens);
+      await expect(result).to.emit(vToken, "Mint").withArgs(minterAddress, mintAmount, mintTokens, mintTokens);
 
-      expect(result) // eslint-disable-line @typescript-eslint/no-floating-promises
+      await expect(result)
         .to.emit(vToken, "Transfer")
-        .withArgs(vToken.address, minterAddress, mintTokens);
+        .withArgs(ethers.constants.AddressZero, minterAddress, mintTokens);
 
       expect(afterBalances).to.deep.equal(
         adjustBalances(beforeBalances, [
@@ -253,7 +251,7 @@ describe("VToken", function () {
 
     it("emits a mint failure if interest accrual fails", async () => {
       interestRateModel.getBorrowRate.reverts("Oups");
-      await expect(quickMint(underlying, vToken, minter, mintAmount)).to.be.reverted; //With("INTEREST_RATE_MODEL_ERROR");
+      await expect(quickMint(underlying, vToken, minter, mintAmount)).to.be.reverted;
     });
 
     it("returns error from mintFresh without emitting any extra logs", async () => {
@@ -269,9 +267,9 @@ describe("VToken", function () {
     });
 
     it("emits an AccrueInterest event", async () => {
-      expect(await quickMint(underlying, vToken, minter, mintAmount)) // eslint-disable-line @typescript-eslint/no-floating-promises
+      await expect(await quickMint(underlying, vToken, minter, mintAmount))
         .to.emit(vToken, "AccrueInterest")
-        .withArgs("1000000000000000000", "0", "0", "0");
+        .withArgs("0", "0", "1000000000000000000", "0", "1000000000100000000");
     });
   });
 
@@ -295,7 +293,6 @@ describe("VToken", function () {
       });
 
       it("continues if fresh", async () => {
-        //await expect(
         await vToken.accrueInterest();
 
         await redeemFresh(vToken, redeemer, redeemTokens, redeemAmount);
@@ -350,13 +347,9 @@ describe("VToken", function () {
         const result = await redeemFresh(vToken, redeemer, redeemTokens, redeemAmount);
         const afterBalances = await getBalances([vToken], [redeemerAddress]);
 
-        expect(result) // eslint-disable-line @typescript-eslint/no-floating-promises
-          .to.emit(vToken, "Redeem")
-          .withArgs(redeemAmount, redeemTokens);
+        await expect(result).to.emit(vToken, "Redeem").withArgs(redeemer.address, redeemAmount, redeemTokens, 0);
 
-        expect(result) // eslint-disable-line @typescript-eslint/no-floating-promises
-          .to.emit(vToken, "Transfer")
-          .withArgs(redeemerAddress, vToken.address, redeemTokens);
+        await expect(result).to.emit(vToken, "Transfer").withArgs(redeemerAddress, vToken.address, redeemTokens);
 
         expect(afterBalances).to.deep.equal(
           adjustBalances(beforeBalances, [
@@ -377,7 +370,7 @@ describe("VToken", function () {
 
     it("emits a redeem failure if interest accrual fails", async () => {
       interestRateModel.getBorrowRate.reverts("Oups");
-      await expect(quickRedeem(vToken, redeemer, redeemTokens)).to.be.reverted; //With("INTEREST_RATE_MODEL_ERROR");
+      await expect(quickRedeem(vToken, redeemer, redeemTokens)).to.be.reverted;
     });
 
     it("returns error from redeemFresh without emitting any extra logs", async () => {
@@ -395,6 +388,15 @@ describe("VToken", function () {
       expect(await underlying.balanceOf(redeemerAddress)).to.equal(redeemAmount);
     });
 
+    it("revert if exchange rate is high and amount is not enough for a token", async () => {
+      const redeemAmount = convertToUnit(1, 5);
+      const exchangeRate = convertToUnit(1, 25);
+      await underlying.harnessSetBalance(vToken.address, redeemAmount);
+      await expect(quickRedeemUnderlying(vToken, redeemer, redeemAmount, { exchangeRate })).to.be.revertedWith(
+        "redeemTokens zero",
+      );
+    });
+
     it("returns success from redeemFresh and redeems the right amount of underlying", async () => {
       await underlying.harnessSetBalance(vToken.address, redeemAmount);
       await quickRedeemUnderlying(vToken, redeemer, redeemAmount, { exchangeRate });
@@ -403,9 +405,9 @@ describe("VToken", function () {
     });
 
     it("emits an AccrueInterest event", async () => {
-      expect(await quickMint(underlying, vToken, minter, mintAmount)) // eslint-disable-line @typescript-eslint/no-floating-promises
+      await expect(await quickRedeem(vToken, redeemer, redeemTokens, { exchangeRate }))
         .to.emit(vToken, "AccrueInterest")
-        .withArgs("1000000000000000000", "500000000", "0", "0");
+        .withArgs("50000000000000000000000000", "0", "1000000000000000000", "0", "1000000000100000000");
     });
   });
 });

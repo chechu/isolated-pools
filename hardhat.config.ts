@@ -157,9 +157,9 @@ const config: HardhatUserConfig = {
       live: false,
     },
     bsctestnet: {
-      url: "https://data-seed-prebsc-1-s1.binance.org:8545",
+      url: "https://bsc-testnet.public.blastapi.io",
       chainId: 97,
-      live: false,
+      live: true,
       gasPrice: 20000000000,
       accounts: {
         mnemonic: process.env.MNEMONIC || "",
@@ -183,7 +183,7 @@ const config: HardhatUserConfig = {
     ],
   },
   paths: {
-    tests: "./tests/hardhat",
+    tests: "./tests",
   },
   // Hardhat deploy
   namedAccounts: {
@@ -191,19 +191,24 @@ const config: HardhatUserConfig = {
     acc1: 1,
     acc2: 2,
     proxyAdmin: 3,
+    acc3: 4,
   },
   docgen: {
     outputDir: "./docs",
     pages: "files",
+    templates: "./docgen-templates",
   },
   external: {
     contracts: [
       {
         artifacts: "node_modules/@venusprotocol/oracle/artifacts",
       },
+      {
+        artifacts: "node_modules/@venusprotocol/venus-protocol/artifacts",
+      },
     ],
     deployments: {
-      bsctestnet: ["node_modules/@venusprotocol/oracle/deployments"],
+      bsctestnet: ["node_modules/@venusprotocol/oracle/deployments/bsctestnet"],
     },
   },
 };
