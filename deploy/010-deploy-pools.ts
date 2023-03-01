@@ -93,6 +93,9 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
         initialSupply,
         supplyCap,
         borrowCap,
+        baseRatePerBlockForStable,
+        stableRatePremium,
+        optimalStableLoanRatio,
       } = vtoken;
 
       const token = getTokenConfig(asset, tokensConfig);
@@ -132,6 +135,9 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
         initialSupply: initialSupply,
         supplyCap: supplyCap,
         borrowCap: borrowCap,
+        baseRatePerBlockForStable: baseRatePerBlockForStable,
+        stableRatePremium: stableRatePremium,
+        optimalStableLoanRatio: optimalStableLoanRatio,
       });
       await tx.wait();
       console.log(`Market ${name} added to pool ${pool.name}`);

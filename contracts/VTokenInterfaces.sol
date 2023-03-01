@@ -444,6 +444,8 @@ abstract contract VTokenInterface is VTokenStorage {
 
     function approve(address spender, uint256 amount) external virtual returns (bool);
 
+    function setComptroller(ComptrollerInterface newComptroller) external virtual;
+
     function allowance(address owner, address spender) external view virtual returns (uint256);
 
     function balanceOf(address owner) external view virtual returns (uint256);
@@ -459,15 +461,7 @@ abstract contract VTokenInterface is VTokenStorage {
             uint256
         );
 
-    function utilizationRate(
-        uint256 cash,
-        uint256 borrows,
-        uint256 reserves
-    ) public pure virtual returns (uint256);
-
     function borrowRatePerBlock() external view virtual returns (uint256);
-
-    function stableBorrowRatePerBlock() public view virtual returns (uint256);
 
     function supplyRatePerBlock() external view virtual returns (uint256);
 
@@ -477,7 +471,13 @@ abstract contract VTokenInterface is VTokenStorage {
 
     function getCash() external view virtual returns (uint256);
 
-    function setComptroller(ComptrollerInterface newComptroller) external virtual;
-
     function setStableInterestRateModel(StableRateModel newStableInterestRateModel) public virtual;
+
+    function stableBorrowRatePerBlock() public view virtual returns (uint256);
+
+    function utilizationRate(
+        uint256 cash,
+        uint256 borrows,
+        uint256 reserves
+    ) public pure virtual returns (uint256);
 }

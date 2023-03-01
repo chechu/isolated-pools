@@ -58,6 +58,9 @@ export type VTokenConfig = {
   initialSupply: string;
   supplyCap: string;
   borrowCap: string;
+  baseRatePerBlockForStable: number;
+  stableRatePremium: number;
+  optimalStableLoanRatio: number;
 };
 
 export enum InterestRateModels {
