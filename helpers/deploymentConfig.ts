@@ -59,8 +59,8 @@ export type VTokenConfig = {
   supplyCap: string;
   borrowCap: string;
   baseRatePerBlockForStable: number;
-  stableRatePremium: number;
-  optimalStableLoanRatio: number;
+  stableRatePremium: string;
+  optimalStableLoanRatio: string;
 };
 
 export enum InterestRateModels {
@@ -149,6 +149,9 @@ export const globalConfig: NetworkConfig = {
             initialSupply: convertToUnit(10, 18),
             supplyCap: convertToUnit(10000, 18),
             borrowCap: convertToUnit(10000, 18),
+            baseRatePerBlockForStable: 0,
+            stableRatePremium: convertToUnit(2, 12),
+            optimalStableLoanRatio: convertToUnit(5, 17),
           },
           {
             name: "Venus WBNB",
@@ -164,6 +167,9 @@ export const globalConfig: NetworkConfig = {
             initialSupply: convertToUnit(10, 18),
             supplyCap: convertToUnit(10000, 18),
             borrowCap: convertToUnit(10000, 18),
+            baseRatePerBlockForStable: 0,
+            stableRatePremium: convertToUnit(2, 12),
+            optimalStableLoanRatio: convertToUnit(5, 17),
           },
         ],
         rewards: [
@@ -201,6 +207,9 @@ export const globalConfig: NetworkConfig = {
             initialSupply: convertToUnit(10, 18),
             supplyCap: convertToUnit(10000, 18),
             borrowCap: convertToUnit(10000, 18),
+            baseRatePerBlockForStable: 0,
+            stableRatePremium: convertToUnit(2, 12),
+            optimalStableLoanRatio: convertToUnit(5, 17),
           },
           {
             name: "Venus WBTC",
@@ -216,6 +225,9 @@ export const globalConfig: NetworkConfig = {
             initialSupply: convertToUnit(10, 18),
             supplyCap: convertToUnit(10000, 18),
             borrowCap: convertToUnit(10000, 18),
+            baseRatePerBlockForStable: 0,
+            stableRatePremium: convertToUnit(2, 12),
+            optimalStableLoanRatio: convertToUnit(5, 17),
           },
         ],
         rewards: [
