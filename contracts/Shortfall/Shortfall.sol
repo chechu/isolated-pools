@@ -9,12 +9,11 @@ import "@venusprotocol/oracle/contracts/PriceOracle.sol";
 import "../VToken.sol";
 import "../ComptrollerInterface.sol";
 import "../RiskFund/IRiskFund.sol";
-import "./IShortfall.sol";
 import "../Pool/PoolRegistry.sol";
 import "../Pool/PoolRegistryInterface.sol";
 import "../Governance/AccessControlled.sol";
 
-contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuardUpgradeable, IShortfall {
+contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuardUpgradeable {
     using SafeERC20Upgradeable for IERC20Upgradeable;
 
     /// @notice Type of auction
@@ -64,9 +63,6 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
 
     /// @notice Time to wait for first bidder. initially waits for 100 blocks
     uint256 public waitForFirstBidder;
-
-    /// @notice base asset contract address
-    address public convertibleBaseAsset;
 
     /// @notice Auctions for each pool
     mapping(address => Auction) public auctions;
@@ -123,18 +119,15 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
 
     /**
      * @notice Initalize the shortfall contract
-     * @param convertibleBaseAsset_ Asset to swap the funds to
      * @param riskFund_ RiskFund contract address
      * @param minimumPoolBadDebt_ Minimum bad debt in base asset for a pool to start auction
      * @param accessControlManager_ AccessControlManager contract address
      */
     function initialize(
-        address convertibleBaseAsset_,
         IRiskFund riskFund_,
         uint256 minimumPoolBadDebt_,
         address accessControlManager_
     ) external initializer {
-        require(convertibleBaseAsset_ != address(0), "invalid base asset address");
         require(address(riskFund_) != address(0), "invalid risk fund address");
         require(minimumPoolBadDebt_ != 0, "invalid minimum pool bad debt");
 
@@ -142,7 +135,6 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
         __AccessControlled_init_unchained(accessControlManager_);
         __ReentrancyGuard_init();
         minimumPoolBadDebt = minimumPoolBadDebt_;
-        convertibleBaseAsset = convertibleBaseAsset_;
         riskFund = riskFund_;
         waitForFirstBidder = 100;
         nextBidderBlockLimit = 10;
@@ -243,8 +235,11 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
             riskFundBidAmount = (auction.seizedRiskFund * auction.highestBidBps) / MAX_BPS;
         }
 
-        uint256 transferredAmount = riskFund.transferReserveForAuction(comptroller, riskFundBidAmount);
-        IERC20Upgradeable(convertibleBaseAsset).safeTransfer(auction.highestBidder, riskFundBidAmount);
+        uint256 transferredAmount = riskFund.transferReserveForAuction(
+            comptroller,
+            auction.highestBidder,
+            riskFundBidAmount
+        );
 
         emit AuctionClosed(
             comptroller,

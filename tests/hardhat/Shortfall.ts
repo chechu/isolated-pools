@@ -12,10 +12,11 @@ import {
   AccessControlManager,
   Comptroller,
   Comptroller__factory,
-  IRiskFund,
   MockToken,
   PoolRegistry,
   PriceOracle,
+  RiskFund,
+  RiskFund__factory,
   Shortfall,
   Shortfall__factory,
   VToken,
@@ -32,7 +33,7 @@ let bidder1: SignerWithAddress;
 let bidder2: SignerWithAddress;
 let shortfall: MockContract<Shortfall>;
 let accessControlManager: AccessControlManager;
-let fakeRiskFund: FakeContract<IRiskFund>;
+let mockRiskFund: MockContract<RiskFund>;
 let mockBUSD: MockToken;
 let mockDAI: MockToken;
 let mockWBTC: MockToken;
@@ -55,15 +56,18 @@ async function shortfallFixture() {
 
   const AccessControlManagerFactor = await ethers.getContractFactory("AccessControlManager");
   accessControlManager = await AccessControlManagerFactor.deploy();
-  fakeRiskFund = await smock.fake<IRiskFund>("IRiskFund");
+
+  const RiskFund = await smock.mock<RiskFund__factory>("RiskFund");
+  mockRiskFund = await RiskFund.deploy();
 
   const Shortfall = await smock.mock<Shortfall__factory>("Shortfall");
   shortfall = await upgrades.deployProxy(Shortfall, [
-    mockBUSD.address,
-    fakeRiskFund.address,
+    mockRiskFund.address,
     parseUnits(minimumPoolBadDebt, "18"),
     accessControlManager.address,
   ]);
+
+  await mockRiskFund.setVariable("shortfall", shortfall.address);
 
   [owner, someone, bidder1, bidder2] = await ethers.getSigners();
 
@@ -83,6 +87,12 @@ async function shortfallFixture() {
   const Comptroller = await smock.mock<Comptroller__factory>("Comptroller");
   comptroller = await Comptroller.deploy(poolRegistry.address);
   poolAddress = comptroller.address;
+
+  await mockRiskFund.setVariable("poolReserves", {
+    [comptroller.address]: parseUnits("10000000", 18),
+  });
+
+  await mockRiskFund.setVariable("convertibleBaseAsset", mockBUSD.address);
 
   poolRegistry.getPoolByComptroller.returns({
     name: "test",
@@ -128,8 +138,7 @@ async function shortfallFixture() {
 
   comptroller.oracle.returns(fakePriceOracle.address);
 
-  fakeRiskFund.getPoolReserve.returns(parseUnits(riskFundBalance, 18));
-  fakeRiskFund.transferReserveForAuction.returns(0);
+  mockRiskFund.getPoolReserve.returns(parseUnits(riskFundBalance, 18));
 
   // Access Control
   await accessControlManager.giveCallPermission(shortfall.address, "updateIncentiveBps(uint256)", owner.address);
@@ -266,7 +275,7 @@ describe("Shortfall: Tests", async function () {
       vDAI.badDebt.returns(parseUnits("1000", 18));
       vWBTC.badDebt.returns(parseUnits("1", 8));
 
-      expect(await fakeRiskFund.getPoolReserve(comptroller.address)).equal(parseUnits(riskFundBalance, 18).toString());
+      expect(await mockRiskFund.getPoolReserve(comptroller.address)).equal(parseUnits(riskFundBalance, 18).toString());
 
       expect(await vDAI.badDebt()).equal(parseUnits("1000", 18));
       expect(await vWBTC.badDebt()).equal(parseUnits("1", 8));
@@ -393,9 +402,8 @@ describe("Shortfall: Tests", async function () {
       const originalBalance = await mockBUSD.balanceOf(bidder2.address);
       await mine((await shortfall.nextBidderBlockLimit()).toNumber() + 2);
 
-      // simulate transferReserveForAuction
-      await mockBUSD.transfer(shortfall.address, parseUnits(riskFundBalance, 18));
-      fakeRiskFund.transferReserveForAuction.returns(parseUnits("10000", 18));
+      // transfer "reserves" to risk fund
+      await mockBUSD.transfer(mockRiskFund.address, parseUnits(riskFundBalance, 18));
 
       await expect(shortfall.closeAuction(poolAddress))
         .to.emit(shortfall, "AuctionClosed")
@@ -431,7 +439,7 @@ describe("Shortfall: Tests", async function () {
       await vWBTC.setVariable("badDebt", parseUnits("1", 8));
 
       riskFundBalance = "50000";
-      fakeRiskFund.getPoolReserve.returns(parseUnits(riskFundBalance, 18));
+      mockRiskFund.getPoolReserve.returns(parseUnits(riskFundBalance, 18));
 
       const receipt = await shortfall.startAuction(poolAddress);
       startBlockNumber = receipt.blockNumber;
@@ -511,9 +519,8 @@ describe("Shortfall: Tests", async function () {
 
       await mine((await shortfall.nextBidderBlockLimit()).toNumber() + 2);
 
-      // simulate transferReserveForAuction
-      await mockBUSD.transfer(shortfall.address, auction.seizedRiskFund);
-      fakeRiskFund.transferReserveForAuction.returns("6138067320000000000000");
+      // transfer "reserves" to risk fund
+      await mockBUSD.transfer(mockRiskFund.address, auction.seizedRiskFund);
 
       await expect(shortfall.closeAuction(poolAddress))
         .to.emit(shortfall, "AuctionClosed")

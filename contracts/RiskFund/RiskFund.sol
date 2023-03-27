@@ -9,7 +9,6 @@ import "../Pool/PoolRegistry.sol";
 import "../IPancakeswapV2Router.sol";
 import "./ReserveHelpers.sol";
 import "./IRiskFund.sol";
-import "../Shortfall/IShortfall.sol";
 import "../Governance/AccessControlled.sol";
 import "../MaxLoopsLimitHelper.sol";
 
@@ -187,11 +186,16 @@ contract RiskFund is
      * @param amount Amount to be transferred to auction contract.
      * @return Number reserved tokens.
      */
-    function transferReserveForAuction(address comptroller, uint256 amount) external override returns (uint256) {
+    function transferReserveForAuction(
+        address comptroller,
+        address highestBidder,
+        uint256 amount
+    ) external override returns (uint256) {
         require(msg.sender == shortfall, "Risk fund: Only callable by Shortfall contract");
         require(amount <= poolReserves[comptroller], "Risk Fund: Insufficient pool reserve.");
         poolReserves[comptroller] = poolReserves[comptroller] - amount;
-        IERC20Upgradeable(convertibleBaseAsset).safeTransfer(shortfall, amount);
+
+        IERC20Upgradeable(convertibleBaseAsset).safeTransfer(highestBidder, amount);
 
         emit TransferredReserveForAuction(comptroller, amount);
 
