@@ -137,6 +137,8 @@ async function shortfallFixture() {
   await accessControlManager.giveCallPermission(shortfall.address, "updateMinimumPoolBadDebt(uint256)", owner.address);
 
   await accessControlManager.giveCallPermission(shortfall.address, "updateWaitForFirstBidder(uint256)", owner.address);
+  
+  await accessControlManager.giveCallPermission(shortfall.address, "pauseAuctions()", owner.address);
 
   await accessControlManager.giveCallPermission(
     shortfall.address,
@@ -589,6 +591,27 @@ describe("Shortfall: Tests", async function () {
       await expect(shortfall.restartAuction(poolAddress)).to.be.revertedWith(
         "you need to wait for more time for first bidder",
       );
+      // Close out auction created for this test case
+      await mine(10);
+      await expect(shortfall.closeAuction(poolAddress));
+    });
+  });
+
+  describe("Auctions can be enabled and disabled", async function () {
+    it("fails if called by a non permissioned account", async function () {
+      await expect(shortfall.connect(someone).pauseAuctions()).to.be.reverted;
+    });
+
+    it("can not interact with auctions when they are paused", async function () {
+      await expect(shortfall.connect(owner).pauseAuctions()).to.emit(shortfall, "AuctionsPaused").withArgs(owner.address);
+      // vDAI.badDebt.returns(parseUnits("10000", 18));
+      // await vDAI.setVariable("badDebt", parseUnits("10000", 18));
+      // vWBTC.badDebt.returns(parseUnits("2", 8));
+      // await vWBTC.setVariable("badDebt", parseUnits("2", 8));
+
+      // await expect(shortfall.startAuction(poolAddress)).to.be.revertedWith("Auctions are paused");
+      // await expect(shortfall.closeAuction(poolAddress)).to.be.revertedWith("Auctions are paused");
+      // await expect(shortfall.placeBid(poolAddress, 1)).to.be.revertedWith("Auctions are paused");
     });
   });
 });

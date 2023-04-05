@@ -62,6 +62,9 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
     /// @notice Time to wait for next bidder. initially waits for 10 blocks
     uint256 public nextBidderBlockLimit;
 
+    /// @notice Boolean of if auctions are paused
+    bool public auctionsPaused;
+
     /// @notice Time to wait for first bidder. initially waits for 100 blocks
     uint256 public waitForFirstBidder;
 
@@ -114,6 +117,12 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
     /// @notice Emitted when incentiveBps is updated
     event IncentiveBpsUpdated(uint256 oldIncentiveBps, uint256 newIncentiveBps);
 
+    /// @notice Emitted when auctions are paused
+    event AuctionsPaused(address sender);
+
+    /// @notice Emitted when auctions are unpaused
+    event AuctionsResumed(address sender);
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         // Note that the contract is upgradeable. Use initialize() or reinitializers
@@ -147,6 +156,7 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
         waitForFirstBidder = 100;
         nextBidderBlockLimit = 10;
         incentiveBps = 1000;
+        auctionsPaused = false;
     }
 
     /**
@@ -154,8 +164,10 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
      * @param comptroller Comptroller address of the pool
      * @param bidBps The bid percent of the risk fund or bad debt depending on auction type
      * @custom:event Emits BidPlaced event on success
+     * @custom:event Errors if auctions are paused
      */
     function placeBid(address comptroller, uint256 bidBps) external nonReentrant {
+        require(auctionsPaused == false, "Auctions are paused");
         Auction storage auction = auctions[comptroller];
 
         require(auction.startBlock != 0 && auction.status == AuctionStatus.STARTED, "no on-going auction");
@@ -204,8 +216,10 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
      * @notice Close an auction
      * @param comptroller Comptroller address of the pool
      * @custom:event Emits AuctionClosed event on successful close
+     * @custom:event Errors if auctions are paused
      */
     function closeAuction(address comptroller) external nonReentrant {
+        require(auctionsPaused == false, "Auctions are paused");
         Auction storage auction = auctions[comptroller];
 
         require(auction.startBlock != 0 && auction.status == AuctionStatus.STARTED, "no on-going auction");
@@ -261,8 +275,10 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
      * @notice Start a auction when there is not currently one active
      * @param comptroller Comptroller address of the pool
      * @custom:event Emits AuctionStarted event on success
+     * @custom:event Errors if auctions are paused
      */
     function startAuction(address comptroller) external {
+        require(auctionsPaused == false, "Auctions are paused");
         _startAuction(comptroller);
     }
 
@@ -270,6 +286,7 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
      * @notice Restart an auction
      * @param comptroller Address of the pool
      * @custom:event Emits AuctionRestarted event on successful restart
+     * @custom:event Errors if auctions are paused
      */
     function restartAuction(address comptroller) external {
         Auction storage auction = auctions[comptroller];
@@ -352,6 +369,25 @@ contract Shortfall is Ownable2StepUpgradeable, AccessControlled, ReentrancyGuard
         address oldPoolRegistry = poolRegistry;
         poolRegistry = _poolRegistry;
         emit PoolRegistryUpdated(oldPoolRegistry, _poolRegistry);
+    }
+
+    /**
+     * @notice Toggle whether auctions are enabled or disabled
+     * @custom:event Emits AuctionEnabledToggled on success
+     * @custom:access Restricted by ACM
+     */
+    function pauseAuctions() external {
+        _checkAccessAllowed("pauseAuctions()");
+        require(auctionsPaused == false, "Auctions are already paused");
+        auctionsPaused = true;
+        emit AuctionsPaused(msg.sender);
+    }
+
+    function resumeAuctions() external {
+        _checkAccessAllowed("resumeAuctions()");
+        require(auctionsPaused == true, "Auctions are not paused");
+        auctionsPaused = false;
+        emit AuctionsResumed(msg.sender);
     }
 
     /**
