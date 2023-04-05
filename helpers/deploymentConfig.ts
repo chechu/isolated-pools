@@ -85,6 +85,13 @@ export const globalConfig: NetworkConfig = {
       },
       {
         isMock: true,
+        name: "Tether",
+        symbol: "USDT",
+        decimals: 18,
+        tokenAddress: ethers.constants.AddressZero,
+      },
+      {
+        isMock: true,
         name: "Bitcoin BEP2",
         symbol: "BTCB",
         decimals: 18,

@@ -15,13 +15,13 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deploy } = deployments;
   const { deployer } = await getNamedAccounts();
   const { tokensConfig } = await getConfig(hre.network.name);
-  const busdConfig = getTokenConfig("BUSD", tokensConfig);
+  const usdtConfig = getTokenConfig("USDT", tokensConfig);
 
-  let BUSD;
-  if (busdConfig.isMock) {
-    BUSD = await ethers.getContract("MockBUSD");
+  let USDT;
+  if (usdtConfig.isMock) {
+    USDT = await ethers.getContract("MockUSDT");
   } else {
-    BUSD = await ethers.getContractAt(ERC20.abi, busdConfig.tokenAddress);
+    USDT = await ethers.getContractAt(ERC20.abi, usdtConfig.tokenAddress);
   }
 
   const swapRouter = await ethers.getContract("SwapRouter");
@@ -35,7 +35,7 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
       proxyContract: "OpenZeppelinTransparentProxy",
       execute: {
         methodName: "initialize",
-        args: [swapRouter.address, MIN_AMOUNT_TO_CONVERT, BUSD.address, accessControl.address, maxLoopsLimit],
+        args: [swapRouter.address, MIN_AMOUNT_TO_CONVERT, USDT.address, accessControl.address, maxLoopsLimit],
       },
       upgradeIndex: 0,
     },
