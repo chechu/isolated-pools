@@ -1,23 +1,26 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity 0.8.13;
 
-import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
-import "@venusprotocol/oracle/contracts/PriceOracle.sol";
-import "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { Ownable2StepUpgradeable } from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import { IERC20Upgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import { SafeERC20Upgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
+import { BeaconProxy } from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { PriceOracle } from "@venusprotocol/oracle/contracts/PriceOracle.sol";
+import { AccessControlManager } from "@venusprotocol/governance-contracts/contracts/Governance/AccessControlManager.sol";
+import { AccessControlledV8 } from "@venusprotocol/governance-contracts/contracts/Governance/AccessControlledV8.sol";
 
+import { PoolRegistryInterface } from "./PoolRegistryInterface.sol";
+import { Comptroller } from "../Comptroller.sol";
+import { VTokenProxyFactory } from "../Factories/VTokenProxyFactory.sol";
+import { JumpRateModelFactory } from "../Factories/JumpRateModelFactory.sol";
+import { WhitePaperInterestRateModelFactory } from "../Factories/WhitePaperInterestRateModelFactory.sol";
+import { WhitePaperInterestRateModel } from "../WhitePaperInterestRateModel.sol";
+import { VToken } from "../VToken.sol";
+import { InterestRateModel } from "../InterestRateModel.sol";
+import { Shortfall } from "../Shortfall/Shortfall.sol";
+import { VTokenInterface } from "../VTokenInterfaces.sol";
 import { ensureNonzeroAddress } from "../lib/validators.sol";
-import "../Comptroller.sol";
-import "../Factories/VTokenProxyFactory.sol";
-import "../Factories/JumpRateModelFactory.sol";
-import "../Factories/WhitePaperInterestRateModelFactory.sol";
-import "../WhitePaperInterestRateModel.sol";
-import "../VToken.sol";
-import "../InterestRateModel.sol";
-import "@venusprotocol/governance-contracts/contracts/Governance/AccessControlManager.sol";
-import "../Shortfall/Shortfall.sol";
-import "../VTokenInterfaces.sol";
-import "./PoolRegistryInterface.sol";
 
 /**
  * @title PoolRegistry
@@ -323,8 +326,8 @@ contract PoolRegistry is Ownable2StepUpgradeable, AccessControlledV8, PoolRegist
 
         IERC20Upgradeable token = IERC20Upgradeable(input.asset);
         uint256 amountToSupply = _transferIn(token, msg.sender, input.initialSupply);
-        token.approve(address(vToken), 0);
-        token.approve(address(vToken), amountToSupply);
+        token.safeApprove(address(vToken), 0);
+        token.safeApprove(address(vToken), amountToSupply);
         vToken.mintBehalf(input.vTokenReceiver, amountToSupply);
 
         emit MarketAdded(address(comptroller), address(vToken));

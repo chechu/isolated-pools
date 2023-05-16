@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.10;
 
-import "@venusprotocol/oracle/contracts/PriceOracle.sol";
-import "../../VToken.sol";
+import { PriceOracle } from "@venusprotocol/oracle/contracts/PriceOracle.sol";
+
+import { VToken } from "../../VToken.sol";
 
 contract MockPriceOracle {
     mapping(address => uint256) public assetPrices;

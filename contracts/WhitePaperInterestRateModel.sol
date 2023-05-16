@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity 0.8.13;
 
+import { InterestRateModel } from "./InterestRateModel.sol";
 import { BLOCKS_PER_YEAR, BASE } from "./lib/constants.sol";
-import "./InterestRateModel.sol";
 
 /**
  * @title Compound's WhitePaperInterestRateModel Contract
