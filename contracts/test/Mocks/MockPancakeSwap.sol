@@ -750,7 +750,7 @@ contract PancakeRouter is IPancakeRouter02 {
         bytes32 s
     ) external virtual override returns (uint256 amountA, uint256 amountB) {
         address pair = PancakeLibrary.pairFor(factory, tokenA, tokenB);
-        uint256 value = approveMax ? type(uint256).max : liquidity;
+        uint256 value = approveMax ? uint256(-1) : liquidity;
         IPancakePair(pair).permit(msg.sender, address(this), value, deadline, v, r, s);
         (amountA, amountB) = removeLiquidity(tokenA, tokenB, liquidity, amountAMin, amountBMin, to, deadline);
     }
@@ -768,7 +768,7 @@ contract PancakeRouter is IPancakeRouter02 {
         bytes32 s
     ) external virtual override returns (uint256 amountToken, uint256 amountETH) {
         address pair = PancakeLibrary.pairFor(factory, token, WETH);
-        uint256 value = approveMax ? type(uint256).max : liquidity;
+        uint256 value = approveMax ? uint256(-1) : liquidity;
         IPancakePair(pair).permit(msg.sender, address(this), value, deadline, v, r, s);
         (amountToken, amountETH) = removeLiquidityETH(token, liquidity, amountTokenMin, amountETHMin, to, deadline);
     }
@@ -801,7 +801,7 @@ contract PancakeRouter is IPancakeRouter02 {
         bytes32 s
     ) external virtual override returns (uint256 amountETH) {
         address pair = PancakeLibrary.pairFor(factory, token, WETH);
-        uint256 value = approveMax ? type(uint256).max : liquidity;
+        uint256 value = approveMax ? uint256(-1) : liquidity;
         IPancakePair(pair).permit(msg.sender, address(this), value, deadline, v, r, s);
         amountETH = removeLiquidityETHSupportingFeeOnTransferTokens(
             token,
